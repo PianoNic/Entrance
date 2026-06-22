@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- three fixed Microsoft panes (tight 2x2) -->
+  <rect x="33" y="9" width="22" height="22" rx="3" fill="#7FBA00"/>
+  <rect x="9" y="33" width="22" height="22" rx="3" fill="#00A4EF"/>
+  <rect x="33" y="33" width="22" height="22" rx="3" fill="#FFB900"/>
+  <!-- dashed socket the door opened from -->
+  <rect x="9" y="9" width="22" height="22" rx="3" fill="none" stroke="#9aa0a6" stroke-width="2" stroke-dasharray="3 3" opacity="0.6"/>
+  <!-- door leaf: hinged on the RIGHT edge, swung open toward the viewer
+       (free edge taller = nearer), rounded via matching stroke -->
+  <path d="M31 11 L39 8 L39 32 L31 29 Z" fill="#F25022" stroke="#F25022"
+        stroke-width="3" stroke-linejoin="round"/>
+</svg>

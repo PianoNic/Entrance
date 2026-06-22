@@ -1,0 +1,4 @@
+.env
+.ms_session.json
+.venv/
+__pycache__/
