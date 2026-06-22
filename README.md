@@ -16,7 +16,7 @@
 > [!WARNING]
 > **For educational and research purposes only.** Use it solely against **accounts you own** or with the **explicit authorization** of the account/tenant owner. It drives a real sign-in with real credentials - treat the cookie jar and any tokens like passwords. See the [Disclaimer](#disclaimer) below.
 
-## About The Project
+## About The Project 
 
 Plenty of services hand you an OAuth "open this URL in a browser to log in" link and federate the actual authentication to **Microsoft Entra**. `entrance` walks that flow for you over pure HTTP - no Playwright, no headless Chromium, no Selenium - and hands back the authorization `code` (or exchanged tokens). Point it at any authorize URL that ends up at `login.microsoftonline.com` and it logs in, handles MFA, and returns.
 
