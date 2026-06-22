@@ -44,12 +44,12 @@ The trick that makes browserless login actually work against a modern Entra tena
 ## Installation
 
 ```bash
-pip install entrance
+pip install ms-entrance
 # or
-uv add entrance
+uv add ms-entrance
 ```
 
-Requires Python 3.10+. `curl_cffi` and `pyotp` are pulled in automatically.
+The import name is `entrance` (e.g. `from entrance import login`). Requires Python 3.10+; `curl_cffi` and `pyotp` are pulled in automatically.
 
 ## Quickstart
 
