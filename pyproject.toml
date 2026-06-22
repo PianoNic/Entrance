@@ -1,0 +1,88 @@
+[build-system]
+requires = ["uv_build >= 0.11.7, <0.12.0"]
+build-backend = "uv_build"
+
+[project]
+name = "entrance"
+version = "0.1.0"
+description = "Browser-grade OAuth login for any Microsoft-federated provider - without a browser."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "PianoNic", email = "contact@pianonic.ch" },
+]
+license = "MIT"
+license-files = ["LICEN[CS]E*"]
+keywords = [
+    "oauth",
+    "oauth2",
+    "oidc",
+    "openid-connect",
+    "pkce",
+    "microsoft",
+    "entra",
+    "entra-id",
+    "azure-ad",
+    "sso",
+    "login",
+    "authentication",
+    "headless",
+    "no-browser",
+    "tls-fingerprint",
+    "impersonation",
+    "totp",
+    "mfa",
+    "curl-cffi",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Systems Administration :: Authentication/Directory",
+]
+dependencies = [
+    "curl_cffi>=0.7",
+    "pyotp>=2.9",
+]
+
+[project.urls]
+Homepage = "https://github.com/PianoNic/Entrance"
+Issues = "https://github.com/PianoNic/Entrance/issues"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "mypy>=1.10",
+    "ruff>=0.6",
+]
+
+[tool.uv.build-backend]
+module-name = "entrance"
+module-root = "src"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501", "E731", "B008"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+files = ["src/entrance"]

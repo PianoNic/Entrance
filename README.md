@@ -20,7 +20,7 @@
 
 Plenty of services hand you an OAuth "open this URL in a browser to log in" link and federate the actual authentication to **Microsoft Entra**. `entrance` walks that flow for you over pure HTTP - no Playwright, no headless Chromium, no Selenium - and hands back the authorization `code` (or exchanged tokens). Point it at any authorize URL that ends up at `login.microsoftonline.com` and it logs in, handles MFA, and returns.
 
-The whole thing is one file (`entrance.py`) and two dependencies.
+The whole thing is one small module and two dependencies.
 
 ## How It Works
 
@@ -44,10 +44,12 @@ The trick that makes browserless login actually work against a modern Entra tena
 ## Installation
 
 ```bash
-pip install curl_cffi pyotp
+pip install entrance
+# or
+uv add entrance
 ```
 
-Then drop [`entrance.py`](./entrance.py) into your project. Requires Python 3.10+.
+Requires Python 3.10+. `curl_cffi` and `pyotp` are pulled in automatically.
 
 ## Quickstart
 
