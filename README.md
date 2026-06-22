@@ -68,6 +68,15 @@ print(res["code"])           # the authorization code (intercepted at the callba
 print(res["callback_url"])   # the full callback URL - built, NOT sent
 ```
 
+**MFA, two ways.** Pass `totp_secret` (Base32 - a fresh code is generated each
+attempt) **or** `totp_code` if you already hold a valid 6-digit code from your
+own authenticator:
+
+```python
+login(authorize_url, "you@school.ch", "...", totp_secret="JBSWY3DPEHPK3PXP")
+login(authorize_url, "you@school.ch", "...", totp_code="123456")  # used as-is
+```
+
 **Exchange the code for tokens** - pass a `token_url` and it does the OAuth exchange for you:
 
 ```python

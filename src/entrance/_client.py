@@ -157,12 +157,32 @@ def _finalize(c, res, cookies):
     return res
 
 
+def _make_otp_source(secret, code):
+    """A callable that returns the OTP to submit for MFA: a precomputed `code`
+    used as-is, or one generated from the Base32 `secret` via pyotp at use-time.
+    Returns None if neither was supplied."""
+    if code is not None:
+        text = str(code)
+        return lambda: text
+    if secret:
+        norm = secret.upper().replace(" ", "")
+
+        def generate():
+            import pyotp  # only needed on the MFA path
+
+            return pyotp.TOTP(norm).now()
+
+        return generate
+    return None
+
+
 # --- public entry point -----------------------------------------------------
 def login(
     authorize_url,
     username=None,
     password=None,
     totp_secret=None,
+    totp_code=None,
     code_verifier=None,
     token_url=None,
     client_id=None,
@@ -191,6 +211,10 @@ def login(
       * Either way the result always includes `session_cookies` (a list of
         dicts) so you can persist them yourself instead of using a file.
 
+    MFA: pass `totp_secret` (Base32, a fresh code is generated per attempt) or
+    `totp_code` (an already-valid 6-digit code, used as-is). Only TOTP /
+    authenticator-app second factors can be satisfied headlessly.
+
     client_id / redirect_uri / state default to the authorize URL's query.
     Tries the seeded cookies first (silent, no password); falls back to a
     username/password login.
@@ -207,6 +231,7 @@ def login(
 
     c = requests.Session(impersonate=IMPERSONATE)
     c.headers.update(BROWSER_HEADERS)
+    otp_source = _make_otp_source(totp_secret, totp_code)
 
     # 1) silent SSO with seeded cookies (no password, no prompt=login)
     if _seed_cookies(c, cookies):
@@ -228,7 +253,7 @@ def login(
         xchg,
         username,
         password,
-        totp_secret,
+        otp_source,
         debug_dump,
         ms_redirect,
     )
@@ -236,10 +261,10 @@ def login(
 
 
 def _drive(
-    c, authorize_url, outer_state, xchg, username, creds, totp_secret, debug_dump, ms_redirect
+    c, authorize_url, outer_state, xchg, username, creds, otp_source, debug_dump, ms_redirect
 ):
     r = c.get(authorize_url, allow_redirects=False)
-    return _walk(c, r, outer_state, xchg, username, creds, totp_secret, debug_dump, ms_redirect)
+    return _walk(c, r, outer_state, xchg, username, creds, otp_source, debug_dump, ms_redirect)
 
 
 def _submit_password(c, cfg, username, password):
@@ -280,9 +305,7 @@ def _submit_password(c, cfg, username, password):
     )
 
 
-def _handle_mfa(c, cfg, totp_secret, debug_dump):
-    import pyotp  # only needed on the MFA path
-
+def _handle_mfa(c, cfg, otp_source, debug_dump):
     proofs = cfg.get("arrUserProofs") or []
     methods = {p.get("authMethodId") for p in proofs}
     chosen = next((m for m in _TOTP_METHODS if m in methods), None)
@@ -293,8 +316,8 @@ def _handle_mfa(c, cfg, totp_secret, debug_dump):
             f"No TOTP method on this account; offered={methods}. "
             "Enroll an authenticator app (PhoneAppOTP)."
         )
-    if not totp_secret:
-        raise MfaRequired("MFA required but no TOTP secret was provided.")
+    if otp_source is None:
+        raise MfaRequired("MFA required but no TOTP secret/code was provided.")
 
     begin_url, end_url = _abs(cfg["urlBeginAuth"]), _abs(cfg["urlEndAuth"])
     process_url = _abs(cfg["urlPost"])
@@ -320,7 +343,7 @@ def _handle_mfa(c, cfg, totp_secret, debug_dump):
     ctx, ft = begin.get("Ctx", ctx), begin.get("FlowToken", ft)
     session_id = begin.get("SessionId")
 
-    otp = pyotp.TOTP(totp_secret.upper().replace(" ", "")).now()
+    otp = otp_source()
     end = c.post(
         end_url,
         json={
@@ -363,7 +386,7 @@ def _walk(
     xchg,
     username,
     creds,
-    totp_secret,
+    otp_source,
     debug_dump,
     ms_redirect=False,
     hops=0,
@@ -381,7 +404,7 @@ def _walk(
             xchg,
             username,
             creds,
-            totp_secret,
+            otp_source,
             debug_dump,
             ms_redirect=ms_redirect,
             hops=hops + 1,
@@ -448,7 +471,7 @@ def _walk(
             return rec(_submit_password(c, cfg, username, creds), pw_done=True)
 
         if cfg.get("urlBeginAuth") or err in _MFA_CODES:  # MFA challenge
-            return rec(_handle_mfa(c, cfg, totp_secret, debug_dump))
+            return rec(_handle_mfa(c, cfg, otp_source, debug_dump))
 
         if url_post.rstrip("/").endswith("kmsi"):  # "Stay signed in?"
             return rec(
