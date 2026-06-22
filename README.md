@@ -1,6 +1,6 @@
 # <p align="center">Entrance</p>
 <p align="center">
-  <img src="https://raw.githubusercontent.com/PianoNic/Entrance/main/assets/entrance-icon.svg" width="150" alt="Entrance Logo">
+  <img src="https://raw.githubusercontent.com/PianoNic/Entrance/refs/heads/main/assets/entrance-icon.svg" width="150" alt="Entrance Logo">
 </p>
 <p align="center">
   <strong>Your headless entrance to Microsoft Entra.</strong><br>
