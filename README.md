@@ -90,6 +90,20 @@ login(authorize_url, "you@school.ch", "...")   # full login, saves the jar
 login(authorize_url)                            # silent - no password, no MFA
 ```
 
+**Cookies your way - file or inline.** `cookies` takes a file path (loaded on
+entry, written back on exit), an inline list of cookie dicts, or `None`. Either
+way the result always carries `session_cookies`, so you can store them yourself
+instead of touching disk:
+
+```python
+# inline in, inline out - nothing written to disk
+res = login(authorize_url, "you@school.ch", "...", cookies=None)
+jar = res["session_cookies"]                    # list of {name, value, domain, path}
+
+# later, seed straight from memory (or your own DB/secret store)
+res = login(authorize_url, cookies=jar)         # silent, no file involved
+```
+
 ## Return Value
 
 | Key | When | What |
