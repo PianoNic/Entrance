@@ -1,8 +1,8 @@
 """
 Headless login for any OAuth2 provider that federates to Microsoft Entra.
 
-Give it an authorize URL — the kind your provider hands you to open in a
-browser — and it drives the Microsoft sign-in over pure HTTP (no browser),
+Give it an authorize URL - the kind your provider hands you to open in a
+browser - and it drives the Microsoft sign-in over pure HTTP (no browser),
 intercepts the authorization `code` at the callback, and optionally exchanges
 it for tokens.
 
@@ -20,8 +20,8 @@ from curl_cffi import requests
 IMPERSONATE = "chrome"
 # ponytail: ESTS serves a JS-only Chrome-SSO "pull" page (hpgid=6, no sFT) to
 # *Google Chrome* (which supports the BSSO extension) but the plain credential
-# page (hpgid=1104, has sFT) to other Chromium browsers. Impersonating Opera —
-# a non-Chrome Chromium — skips the un-replayable SSO-pull step entirely.
+# page (hpgid=1104, has sFT) to other Chromium browsers. Impersonating Opera -
+# a non-Chrome Chromium - skips the un-replayable SSO-pull step entirely.
 BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 OPR/132.0.0.0",
@@ -51,7 +51,7 @@ class LoginFailed(RuntimeError):
 
 
 class NeedsCredentials(RuntimeError):
-    """Silent (cookie-jar) attempt didn't authenticate — fall back to password."""
+    """Silent (cookie-jar) attempt didn't authenticate - fall back to password."""
 
 
 # --- helpers ----------------------------------------------------------------
@@ -152,7 +152,7 @@ def login(authorize_url, username=None, password=None, totp_secret=None,
         `callback_url` is BUILT not sent (pass `callback` for your own base).
         `tokens`/`access_token` are filled only if `token_url` is given.
       * ms_redirect=True: stop at the redirect Microsoft issues back to the
-        provider and return it WITHOUT following — the inner code is never
+        provider and return it WITHOUT following - the inner code is never
         consumed, no session is established. Returns:
             {redirect_url, code, state, session_state}
 
@@ -282,7 +282,7 @@ def _walk(c, r, outer_state, xchg, username, creds, totp_secret, debug_dump,
         if q.get("error"):
             raise LoginFailed("OAuth error: " + q.get("error_description", q["error"]))
         # ms_redirect: stop at the redirect leaving Microsoft back to the
-        # provider, carrying the (inner) code — don't follow it.
+        # provider, carrying the (inner) code - don't follow it.
         if ms_redirect and "login.microsoftonline.com" in str(r.url) \
                 and "login.microsoftonline.com" not in loc and q.get("code"):
             return {"redirect_url": loc, "code": q.get("code"),
@@ -346,7 +346,7 @@ def _walk(c, r, outer_state, xchg, username, creds, totp_secret, debug_dump,
         raise NeedsCredentials()        # silent attempt fell through -> need login
     if debug_dump:
         open(debug_dump, "w", encoding="utf-8").write(r.text)
-    raise LoginFailed("Stuck on a page with no form/redirect — UI changed or an "
+    raise LoginFailed("Stuck on a page with no form/redirect - UI changed or an "
                       "unhandled challenge.")
 
 
@@ -362,7 +362,7 @@ def _result(code, code_verifier, state, tokens, callback_url):
         "code": code,                       # raw authorization code at the callback
         "code_verifier": code_verifier,     # pair with `code` to exchange elsewhere
         "state": state,
-        "callback_url": callback_url,       # built, NOT sent — yours to forward
+        "callback_url": callback_url,       # built, NOT sent - yours to forward
         "access_token": (tokens or {}).get("access_token"),
         "tokens": tokens,                   # full token-endpoint response (or None)
     }

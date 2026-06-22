@@ -1,8 +1,8 @@
 """
-Get a Schulnetz token/session headlessly — no hosted endpoint, no browser.
+Get a Schulnetz token/session headlessly - no hosted endpoint, no browser.
 
 Both targets return only the Microsoft redirect (the inner code Microsoft hands
-back to the provider), intercepted before it is consumed — no token exchange,
+back to the provider), intercepted before it is consumed - no token exchange,
 no session. They differ only by entry point:
   * mobile -> authorize.php (PKCE)  => {redirect_url, code, state, code_verifier}
   * web    -> the school root /     => {redirect_url, code, state, session_state}
