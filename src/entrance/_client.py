@@ -122,7 +122,8 @@ def _seed_cookies(c, cookies):
         if not os.path.exists(cookies):
             return False
         try:
-            data = json.load(open(cookies, encoding="utf-8"))
+            with open(cookies, encoding="utf-8") as f:
+                data = json.load(f)
         except (ValueError, OSError):
             return False
     elif isinstance(cookies, (list, tuple)):
@@ -134,8 +135,8 @@ def _seed_cookies(c, cookies):
             c.cookies.set(
                 ck["name"], ck["value"], domain=ck.get("domain", ""), path=ck.get("path", "/")
             )
-        except Exception:
-            pass
+        except (KeyError, TypeError):
+            continue
     return bool(data)
 
 
@@ -153,7 +154,10 @@ def _finalize(c, res, cookies):
     jar = _dump_cookies(c)
     res["session_cookies"] = jar
     if isinstance(cookies, str):
-        json.dump(jar, open(cookies, "w", encoding="utf-8"))
+        # Owner-only (0600): the cookie jar is a session credential.
+        fd = os.open(cookies, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(jar, f)
     return res
 
 
@@ -311,7 +315,10 @@ def _handle_mfa(c, cfg, otp_source, debug_dump):
     chosen = next((m for m in _TOTP_METHODS if m in methods), None)
     if not chosen:
         if debug_dump:
-            open(debug_dump, "w", encoding="utf-8").write(json.dumps(cfg, indent=2))
+            # Owner-only (0600): the dump contains raw auth flow tokens (sFT, sCtx, canary).
+            fd = os.open(debug_dump, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(json.dumps(cfg, indent=2))
         raise MfaRequired(
             f"No TOTP method on this account; offered={methods}. "
             "Enroll an authenticator app (PhoneAppOTP)."
@@ -508,7 +515,10 @@ def _walk(
     if creds is None:
         raise NeedsCredentials()  # silent attempt fell through -> need login
     if debug_dump:
-        open(debug_dump, "w", encoding="utf-8").write(r.text)
+        # Owner-only (0600): the dump may contain sensitive page content.
+        fd = os.open(debug_dump, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(r.text)
     raise LoginFailed(
         "Stuck on a page with no form/redirect - UI changed or an unhandled challenge."
     )
