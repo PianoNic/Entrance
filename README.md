@@ -31,6 +31,7 @@ The whole thing is one small module and two dependencies.
 - 🔐 **Headless MFA** - TOTP second factor solved automatically from your authenticator secret
 - 🙋 **Browser fallback** - `interactive=True` opens the real browser for what headless can't do (push / number-matching MFA, passkeys), catching the code via a localhost server or copy-paste
 - 🔑 **Mint & enroll TOTP** - `new_totp()` generates a software token, `enroll_totp()` registers a brand-new one on the account, so every later login is fully headless
+- 🔢 **Device code sign-in** - `device_login()` / `foci_login(device=True)`: show a short code, the user enters it at a URL - no redirect, no loopback, no copy-paste
 - 🧩 **FOCI broker** - `foci_login()` turns one sign-in into tokens for any pre-consented first-party client / scope, persisted for password-free reruns
 - 🍪 **Silent SSO** - persisted cookie jar means password-free reruns
 - 📦 **Tiny** - one core module, `curl_cffi` + `pyotp`
