@@ -10,7 +10,7 @@ import pytest
 import entrance
 from entrance import _enroll
 
-SECRET = "7hnh5rzn6d6rztvx"
+SECRET = "JBSWY3DPEHPK3PXP"
 
 
 class FakeApiSession:
@@ -24,7 +24,7 @@ class FakeApiSession:
             "session/authorize": {"isAuthorized": True, "sessionCtxV2": "CTX", "ErrorCode": 0},
             "authenticationmethods/initializemobileapp": {
                 "SecretKey": SECRET,
-                "AccountName": "BBBaden:you@school.ch",
+                "AccountName": "Example:you@school.ch",
                 "ErrorCode": 0,
             },
             "authenticationmethods/new": {"VerificationContext": "VCTX", "ErrorCode": 0},
@@ -63,7 +63,7 @@ def test_enroll_totp_happy_path(faked, monkeypatch):
     dev = entrance.enroll_totp("you@school.ch", "pw", totp_secret="OLDSECRET")
     assert isinstance(dev, entrance.TotpDevice)
     assert dev.secret == SECRET
-    assert dev.account_name == "BBBaden:you@school.ch"
+    assert dev.account_name == "Example:you@school.ch"
 
     paths = [c["path"] for c in faked.calls]
     assert paths == [
