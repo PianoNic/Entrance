@@ -121,6 +121,27 @@ res = login(authorize_url, "you@school.ch", "...",
 print(res["access_token"])
 ```
 
+**FOCI broker - one sign-in, every first-party client.** `foci_login()` signs in
+against a pre-consented Microsoft first-party client, gets a **family refresh
+token**, and returns a `Broker` that trades it for an access token for any
+first-party client / scope on demand - no app registration. The refresh token
+is persisted (atomically, 0600), so later runs skip the sign-in entirely:
+
+```python
+from entrance import foci_login
+
+broker = foci_login("you@school.ch", "password", totp_secret="BASE32")  # saves .ms_frt
+graph_token = broker("d3590ed6-52b3-4102-aeff-aad2292ab01c")            # Office client -> Graph
+onenote_token = broker("1fec8e78-bce4-4aaf-ab1b-5451cc387264")          # a different client
+
+# reuse a saved token later with no sign-in, or bring your own
+from entrance import Broker
+broker = Broker(refresh_token, store=".ms_frt")
+```
+
+Which clients are FOCI-family and pre-consented is tenant-dependent; this is the
+engine behind [OutNote](https://github.com/PianoNic/OutNote)'s Microsoft 365 access.
+
 **Just the Microsoft handoff** - stop at the redirect Microsoft issues back to the provider, untouched:
 
 ```python
