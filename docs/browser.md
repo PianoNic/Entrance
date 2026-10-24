@@ -10,6 +10,21 @@ opens in the browser and the code comes back to the library:
 res = login(authorize_url, "you@school.ch", "...", interactive=True)
 ```
 
+### Normal (full manual) login
+
+To skip headless entirely and have the user do the **whole** sign-in in the browser
+- email, password and 2FA - pass `interactive="always"` (no credentials needed):
+
+```python
+res = login(authorize_url, interactive="always")   # opens the full Microsoft login page
+```
+
+With plain `interactive=True` and no `username`/`password`, `login()` also lands
+here after a quick silent-cookie check. `browser_login(authorize_url)` is the same
+thing called directly. This works through the higher-level helpers too - e.g.
+`foci_login(interactive="always")` or `outnote.authenticate(interactive="always")`
+pop a full browser login and return a ready client.
+
 Two ways the code returns, chosen by the `redirect_uri`:
 
 - **loopback** (`http://localhost[:port]/...`): a tiny local server catches the
