@@ -16,198 +16,55 @@
 > [!WARNING]
 > **For educational and research purposes only.** Use it solely against **accounts you own** or with the **explicit authorization** of the account/tenant owner. It drives a real sign-in with real credentials - treat the cookie jar and any tokens like passwords. See the [Disclaimer](#disclaimer) below.
 
-## About The Project
+---
+
+## What is Entrance?
 
 Plenty of services hand you an OAuth "open this URL in a browser to log in" link and federate the actual authentication to **Microsoft Entra**. `entrance` walks that flow for you over pure HTTP - no Playwright, no headless Chromium, no Selenium - and hands back the authorization `code` (or exchanged tokens). Point it at any authorize URL that ends up at `login.microsoftonline.com` and it logs in, handles MFA, and returns.
 
 The whole thing is one small module and two dependencies.
-
-## How It Works
-
-The trick that makes browserless login actually work against a modern Entra tenant:
-
-- **Impersonate Opera, not Chrome.** Entra serves a JavaScript-only "Chrome SSO pull" page (un-replayable without a real browser) when it sees a *Google Chrome* user-agent. Tell it you're **Opera** - a non-Chrome Chromium - and it serves the plain credential page instead, which *is* replayable.
-- **Real browser fingerprint.** [`curl_cffi`](https://github.com/lexiforest/curl_cffi) replays a genuine browser TLS/JA3 fingerprint, so Entra's edge sees a browser at the wire level.
-- **Replay the login XHRs by hand** - `GetCredentialType` → `login` → "Stay signed in?". For MFA, the `SAS/BeginAuth` + `SAS/EndAuth` pair with a **TOTP** code computed via [`pyotp`](https://github.com/pyauth/pyotp).
-- **Intercept the code** at the callback redirect - it's read off the `Location` header and never actually delivered.
-- **Silent reuse.** The Microsoft session cookie jar is persisted, so the next run logs in with no password (and no MFA prompt) until it expires.
 
 ## Features
 
 - 🚪 **No browser** - pure HTTP, drives `login.microsoftonline.com` directly
 - 🌐 **Provider-agnostic** - give it any OAuth2 authorize URL federated to Entra
 - 🔐 **Headless MFA** - TOTP second factor solved automatically from your authenticator secret
-- 🙋 **Browser fallback** - `interactive=True` opens the real browser for what headless can't do (push / number-matching MFA, passkeys), and catches the code via a localhost server or copy-paste
-- 🔑 **Mint & enroll a TOTP device** - `new_totp()` generates a software token, and `enroll_totp()` registers a brand-new one on the account automatically, so every later `login()` is fully headless
+- 🙋 **Browser fallback** - `interactive=True` opens the real browser for what headless can't do (push / number-matching MFA, passkeys), catching the code via a localhost server or copy-paste
+- 🔑 **Mint & enroll TOTP** - `new_totp()` generates a software token, `enroll_totp()` registers a brand-new one on the account, so every later login is fully headless
+- 🧩 **FOCI broker** - `foci_login()` turns one sign-in into tokens for any pre-consented first-party client / scope, persisted for password-free reruns
 - 🍪 **Silent SSO** - persisted cookie jar means password-free reruns
-- 🎛️ **Three return modes** - the raw `code`, exchanged `access_token`, or just the Microsoft redirect
-- 📦 **Tiny** - one module, `curl_cffi` + `pyotp`
+- 📦 **Tiny** - one core module, `curl_cffi` + `pyotp`
 
-## Installation
+## Install
 
 ```bash
-pip install ms-entrance
-# or
-uv add ms-entrance
+pip install ms-entrance        # or: uv add ms-entrance
 ```
 
-The import name is `entrance` (e.g. `from entrance import login`). Requires Python 3.10+; `curl_cffi` and `pyotp` are pulled in automatically.
+The import name is `entrance` (`from entrance import login`). Python 3.10+;
+`curl_cffi` and `pyotp` are pulled in automatically.
 
 ## Quickstart
 
 ```python
 from entrance import login
 
-# Intercept the authorization code from any Entra-federated authorize URL
 res = login(
     "https://provider.example/authorize?client_id=...&state=...&code_challenge=...",
     username="you@school.ch",
     password="...",
     totp_secret="JBSWY3DPEHPK3PXP",   # optional - only if the account has TOTP MFA
 )
-
 print(res["code"])           # the authorization code (intercepted at the callback)
 print(res["callback_url"])   # the full callback URL - built, NOT sent
 ```
 
-**MFA, two ways.** Pass `totp_secret` (Base32 - a fresh code is generated each
-attempt) **or** `totp_code` if you already hold a valid 6-digit code from your
-own authenticator:
+## Docs
 
-```python
-login(authorize_url, "you@school.ch", "...", totp_secret="JBSWY3DPEHPK3PXP")
-login(authorize_url, "you@school.ch", "...", totp_code="123456")  # used as-is
-```
-
-**Mint a TOTP device.** `new_totp()` generates a software token (or wraps a
-secret you supply) and gives you the Base32 `secret` to feed back into
-`login(totp_secret=...)`, plus an `otpauth://` provisioning URI to enroll it:
-
-```python
-from entrance import new_totp
-
-dev = new_totp("you@school.ch")
-print(dev.secret)   # Base32 - store it, pass to login(totp_secret=...)
-print(dev.uri)      # otpauth://... - render as a QR, or paste the secret into the portal
-print(dev.now())    # the current 6-digit code
-```
-
-Generating and using the secret is local and offline. You can also **register
-it on the account automatically** with `enroll_totp()`, which drives the same
-Security info backend the portal uses (*Add → Authenticator app → "use a
-different app"*) and returns the new device:
-
-```python
-from entrance import enroll_totp
-
-dev = enroll_totp("you@school.ch", "password", totp_secret="EXISTING_BASE32")
-print(dev.secret)   # a brand-new factor, already active on the account
-login(authorize_url, "you@school.ch", "password", totp_secret=dev.secret)  # now fully headless
-```
-
-Entra won't let you add a second factor without proving a current one (the
-`ngcmfa` "fresh MFA" claim), so you must already hold a working factor - pass an
-existing `totp_secret` / `totp_code`, or `interactive=True` to approve it in a
-browser. `enroll_totp` **mutates the account** (it adds a sign-in method; it
-never touches existing ones), so use it only on accounts you own or are
-authorized to change. If you'd rather do it by hand, enroll the `secret`/`uri`
-once at [Security info](https://aka.ms/mysecurityinfo).
-
-**Exchange the code for tokens** - pass a `token_url` and it does the OAuth exchange for you:
-
-```python
-res = login(authorize_url, "you@school.ch", "...",
-            code_verifier=verifier, token_url="https://provider.example/token")
-print(res["access_token"])
-```
-
-**FOCI broker - one sign-in, every first-party client.** `foci_login()` signs in
-against a pre-consented Microsoft first-party client, gets a **family refresh
-token**, and returns a `Broker` that trades it for an access token for any
-first-party client / scope on demand - no app registration. The refresh token
-is persisted (atomically, 0600), so later runs skip the sign-in entirely:
-
-```python
-from entrance import foci_login
-
-broker = foci_login("you@school.ch", "password", totp_secret="BASE32")  # saves .ms_frt
-graph_token = broker("d3590ed6-52b3-4102-aeff-aad2292ab01c")            # Office client -> Graph
-onenote_token = broker("1fec8e78-bce4-4aaf-ab1b-5451cc387264")          # a different client
-
-# reuse a saved token later with no sign-in, or bring your own
-from entrance import Broker
-broker = Broker(refresh_token, store=".ms_frt")
-```
-
-Which clients are FOCI-family and pre-consented is tenant-dependent; this is the
-engine behind [OutNote](https://github.com/PianoNic/OutNote)'s Microsoft 365 access.
-
-**Just the Microsoft handoff** - stop at the redirect Microsoft issues back to the provider, untouched:
-
-```python
-res = login("https://provider.example/", "you@school.ch", "...", ms_redirect=True)
-print(res["redirect_url"])   # https://provider.example/?code=...&state=...&session_state=...
-```
-
-**Silent reuse** - the first call saves `.ms_session.json`; every call after that skips the password:
-
-```python
-login(authorize_url, "you@school.ch", "...")   # full login, saves the jar
-login(authorize_url)                            # silent - no password, no MFA
-```
-
-**Cookies your way - file or inline.** `cookies` takes a file path (loaded on
-entry, written back on exit), an inline list of cookie dicts, or `None`. Either
-way the result always carries `session_cookies`, so you can store them yourself
-instead of touching disk:
-
-```python
-# inline in, inline out - nothing written to disk
-res = login(authorize_url, "you@school.ch", "...", cookies=None)
-jar = res["session_cookies"]                    # list of {name, value, domain, path}
-
-# later, seed straight from memory (or your own DB/secret store)
-res = login(authorize_url, cookies=jar)         # silent, no file involved
-```
-
-**Fall back to the real browser** - for what headless can't do (push / number-matching MFA, passkeys, an unhandled interstitial). With `interactive=True`, if the headless login can't finish, the authorize URL opens in the user's own browser and the code comes back to the library:
-
-```python
-res = login(authorize_url, "you@school.ch", "...", interactive=True)
-```
-
-Two ways the code returns, chosen by the `redirect_uri`:
-
-- **loopback** (`http://localhost[:port]/...`): a tiny local server catches the redirect itself, like `az login`. A missing port is filled with a free one.
-- **paste** (anything else, e.g. Microsoft's `.../nativeclient`): the user copies the final URL from the address bar and pastes it back.
-
-Call it directly, without ever trying headless, with `browser_login()`:
-
-```python
-from entrance import browser_login
-
-res = browser_login(authorize_url, code_verifier=verifier, token_url="https://provider.example/token")
-print(res["mode"])   # "loopback" or "paste"
-```
-
-The browser's cookies stay in the browser, so an interactive run returns no `session_cookies` and writes no cookie file - persist the `code`/tokens instead. (`webbrowser.open` and `input` can be swapped via `open_browser=` / `prompt=`.)
-
-## Return Value
-
-| Key | When | What |
-|---|---|---|
-| `code` | always | the authorization code |
-| `code_verifier` / `state` | always | echoed back for your own exchange |
-| `callback_url` | default mode | the `redirect_uri?code=…&state=…`, built not sent |
-| `access_token` / `tokens` | when `token_url` is set | the exchanged token response |
-| `redirect_url` / `session_state` | when `ms_redirect=True` | the raw Microsoft → provider redirect |
-| `mode` | `browser_login` / `interactive` | `"loopback"` or `"paste"` |
-
-## Caveats
-
-- Works only against **managed** Entra tenants (`login.microsoftonline.com`), not third-party federated IdPs (ADFS, Google, etc.).
-- **Push / SMS MFA can't be done headless** - only TOTP (authenticator app). Enroll one and pass its Base32 secret, or use `interactive=True` to finish in a browser.
-- Microsoft tweaks its login pages; if a flow breaks, the user-agent or a field name is usually the culprit.
+- [`login()`](docs/login.md) - MFA, token exchange, `ms_redirect`, cookies, return value, how it works
+- [Browser fallback](docs/browser.md) - `interactive=True` / `browser_login()` (loopback + paste)
+- [TOTP devices](docs/totp.md) - `new_totp()` and headless `enroll_totp()`
+- [FOCI broker](docs/foci.md) - `foci_login()` / `Broker` for Microsoft first-party clients
 
 ## Disclaimer
 
