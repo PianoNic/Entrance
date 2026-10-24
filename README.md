@@ -38,7 +38,7 @@ The trick that makes browserless login actually work against a modern Entra tena
 - 🌐 **Provider-agnostic** - give it any OAuth2 authorize URL federated to Entra
 - 🔐 **Headless MFA** - TOTP second factor solved automatically from your authenticator secret
 - 🙋 **Browser fallback** - `interactive=True` opens the real browser for what headless can't do (push / number-matching MFA, passkeys), and catches the code via a localhost server or copy-paste
-- 🔑 **Mint a TOTP device** - `new_totp()` generates a software token + `otpauth://` URI to enroll once, then log in headlessly forever after
+- 🔑 **Mint & enroll a TOTP device** - `new_totp()` generates a software token, and `enroll_totp()` registers a brand-new one on the account automatically, so every later `login()` is fully headless
 - 🍪 **Silent SSO** - persisted cookie jar means password-free reruns
 - 🎛️ **Three return modes** - the raw `code`, exchanged `access_token`, or just the Microsoft redirect
 - 📦 **Tiny** - one module, `curl_cffi` + `pyotp`
@@ -92,12 +92,26 @@ print(dev.uri)      # otpauth://... - render as a QR, or paste the secret into t
 print(dev.now())    # the current 6-digit code
 ```
 
-Generating and using the secret is local and offline. **Registering** it as a
-real second factor is an account-side step: Entra gates self-service
-auth-method management behind an approved portal app and a fresh interactive
-MFA, so enroll the `secret`/`uri` once at [Security info](https://aka.ms/mysecurityinfo)
-(*Add → Authenticator app → "I want to use a different authenticator app"*).
-After that, every `login()` is fully headless.
+Generating and using the secret is local and offline. You can also **register
+it on the account automatically** with `enroll_totp()`, which drives the same
+Security info backend the portal uses (*Add → Authenticator app → "use a
+different app"*) and returns the new device:
+
+```python
+from entrance import enroll_totp
+
+dev = enroll_totp("you@school.ch", "password", totp_secret="EXISTING_BASE32")
+print(dev.secret)   # a brand-new factor, already active on the account
+login(authorize_url, "you@school.ch", "password", totp_secret=dev.secret)  # now fully headless
+```
+
+Entra won't let you add a second factor without proving a current one (the
+`ngcmfa` "fresh MFA" claim), so you must already hold a working factor - pass an
+existing `totp_secret` / `totp_code`, or `interactive=True` to approve it in a
+browser. `enroll_totp` **mutates the account** (it adds a sign-in method; it
+never touches existing ones), so use it only on accounts you own or are
+authorized to change. If you'd rather do it by hand, enroll the `secret`/`uri`
+once at [Security info](https://aka.ms/mysecurityinfo).
 
 **Exchange the code for tokens** - pass a `token_url` and it does the OAuth exchange for you:
 

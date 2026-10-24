@@ -10,6 +10,7 @@ from ._client import (
     login,
     parse_config,
 )
+from ._enroll import EnrollmentError, enroll_totp
 from ._totp import TotpDevice, new_totp, totp_now, totp_verify
 
 __all__ = [
@@ -21,6 +22,8 @@ __all__ = [
     "totp_now",
     "totp_verify",
     "TotpDevice",
+    "enroll_totp",
+    "EnrollmentError",
     "BROWSER_HEADERS",
     "MfaRequired",
     "LoginFailed",
