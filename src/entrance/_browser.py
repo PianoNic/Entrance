@@ -182,8 +182,11 @@ def browser_login(
         _say(
             "Opening your browser to sign in. If it doesn't open, visit:\n"
             f"{authorize_url}\n\n"
-            "After signing in you land on a page that may look blank or show an\n"
-            "error - that's expected. Copy the full URL from the address bar."
+            "After signing in you'll land on a blank Microsoft page that may warn\n"
+            "about phishing or say the URL contains your info. That's expected here:\n"
+            "the URL carries a one-time sign-in code (not your password). Copy the\n"
+            "FULL URL from the address bar and paste it below - don't share it with\n"
+            "anyone else."
         )
         try:
             open_browser(authorize_url)
