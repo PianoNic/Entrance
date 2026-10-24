@@ -37,6 +37,8 @@ The trick that makes browserless login actually work against a modern Entra tena
 - 🚪 **No browser** - pure HTTP, drives `login.microsoftonline.com` directly
 - 🌐 **Provider-agnostic** - give it any OAuth2 authorize URL federated to Entra
 - 🔐 **Headless MFA** - TOTP second factor solved automatically from your authenticator secret
+- 🙋 **Browser fallback** - `interactive=True` opens the real browser for what headless can't do (push / number-matching MFA, passkeys), and catches the code via a localhost server or copy-paste
+- 🔑 **Mint & enroll a TOTP device** - `new_totp()` generates a software token, and `enroll_totp()` registers a brand-new one on the account automatically, so every later `login()` is fully headless
 - 🍪 **Silent SSO** - persisted cookie jar means password-free reruns
 - 🎛️ **Three return modes** - the raw `code`, exchanged `access_token`, or just the Microsoft redirect
 - 📦 **Tiny** - one module, `curl_cffi` + `pyotp`
@@ -77,6 +79,40 @@ login(authorize_url, "you@school.ch", "...", totp_secret="JBSWY3DPEHPK3PXP")
 login(authorize_url, "you@school.ch", "...", totp_code="123456")  # used as-is
 ```
 
+**Mint a TOTP device.** `new_totp()` generates a software token (or wraps a
+secret you supply) and gives you the Base32 `secret` to feed back into
+`login(totp_secret=...)`, plus an `otpauth://` provisioning URI to enroll it:
+
+```python
+from entrance import new_totp
+
+dev = new_totp("you@school.ch")
+print(dev.secret)   # Base32 - store it, pass to login(totp_secret=...)
+print(dev.uri)      # otpauth://... - render as a QR, or paste the secret into the portal
+print(dev.now())    # the current 6-digit code
+```
+
+Generating and using the secret is local and offline. You can also **register
+it on the account automatically** with `enroll_totp()`, which drives the same
+Security info backend the portal uses (*Add → Authenticator app → "use a
+different app"*) and returns the new device:
+
+```python
+from entrance import enroll_totp
+
+dev = enroll_totp("you@school.ch", "password", totp_secret="EXISTING_BASE32")
+print(dev.secret)   # a brand-new factor, already active on the account
+login(authorize_url, "you@school.ch", "password", totp_secret=dev.secret)  # now fully headless
+```
+
+Entra won't let you add a second factor without proving a current one (the
+`ngcmfa` "fresh MFA" claim), so you must already hold a working factor - pass an
+existing `totp_secret` / `totp_code`, or `interactive=True` to approve it in a
+browser. `enroll_totp` **mutates the account** (it adds a sign-in method; it
+never touches existing ones), so use it only on accounts you own or are
+authorized to change. If you'd rather do it by hand, enroll the `secret`/`uri`
+once at [Security info](https://aka.ms/mysecurityinfo).
+
 **Exchange the code for tokens** - pass a `token_url` and it does the OAuth exchange for you:
 
 ```python
@@ -113,6 +149,28 @@ jar = res["session_cookies"]                    # list of {name, value, domain, 
 res = login(authorize_url, cookies=jar)         # silent, no file involved
 ```
 
+**Fall back to the real browser** - for what headless can't do (push / number-matching MFA, passkeys, an unhandled interstitial). With `interactive=True`, if the headless login can't finish, the authorize URL opens in the user's own browser and the code comes back to the library:
+
+```python
+res = login(authorize_url, "you@school.ch", "...", interactive=True)
+```
+
+Two ways the code returns, chosen by the `redirect_uri`:
+
+- **loopback** (`http://localhost[:port]/...`): a tiny local server catches the redirect itself, like `az login`. A missing port is filled with a free one.
+- **paste** (anything else, e.g. Microsoft's `.../nativeclient`): the user copies the final URL from the address bar and pastes it back.
+
+Call it directly, without ever trying headless, with `browser_login()`:
+
+```python
+from entrance import browser_login
+
+res = browser_login(authorize_url, code_verifier=verifier, token_url="https://provider.example/token")
+print(res["mode"])   # "loopback" or "paste"
+```
+
+The browser's cookies stay in the browser, so an interactive run returns no `session_cookies` and writes no cookie file - persist the `code`/tokens instead. (`webbrowser.open` and `input` can be swapped via `open_browser=` / `prompt=`.)
+
 ## Return Value
 
 | Key | When | What |
@@ -122,11 +180,12 @@ res = login(authorize_url, cookies=jar)         # silent, no file involved
 | `callback_url` | default mode | the `redirect_uri?code=…&state=…`, built not sent |
 | `access_token` / `tokens` | when `token_url` is set | the exchanged token response |
 | `redirect_url` / `session_state` | when `ms_redirect=True` | the raw Microsoft → provider redirect |
+| `mode` | `browser_login` / `interactive` | `"loopback"` or `"paste"` |
 
 ## Caveats
 
 - Works only against **managed** Entra tenants (`login.microsoftonline.com`), not third-party federated IdPs (ADFS, Google, etc.).
-- **Push / SMS MFA can't be done headless** - only TOTP (authenticator app). Enroll one and pass its Base32 secret.
+- **Push / SMS MFA can't be done headless** - only TOTP (authenticator app). Enroll one and pass its Base32 secret, or use `interactive=True` to finish in a browser.
 - Microsoft tweaks its login pages; if a flow breaks, the user-agent or a field name is usually the culprit.
 
 ## Disclaimer

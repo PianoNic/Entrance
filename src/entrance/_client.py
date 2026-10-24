@@ -13,6 +13,7 @@ read from the authorize URL; the token endpoint is whatever you pass in.
 import json
 import os
 import re
+import sys
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from curl_cffi import requests
@@ -195,6 +196,7 @@ def login(
     ms_redirect=False,
     cookies=".ms_session.json",
     debug_dump=None,
+    interactive=False,
 ):
     """Drive `authorize_url` through Microsoft and return a dict.
 
@@ -222,7 +224,62 @@ def login(
     client_id / redirect_uri / state default to the authorize URL's query.
     Tries the seeded cookies first (silent, no password); falls back to a
     username/password login.
+
+    `interactive=True` adds a last resort: if the headless login can't finish
+    (no credentials, push/number-matching MFA, an unhandled page), the sign-in
+    opens in the user's own browser instead - see `browser_login()`. The
+    browser's cookies are not captured, so that run returns no
+    `session_cookies` and writes no cookie file.
     """
+    if interactive and ms_redirect:
+        raise ValueError("interactive=True can't be combined with ms_redirect=True")
+    try:
+        return _headless(
+            authorize_url,
+            username,
+            password,
+            totp_secret,
+            totp_code,
+            code_verifier,
+            token_url,
+            client_id,
+            redirect_uri,
+            callback,
+            ms_redirect,
+            cookies,
+            debug_dump,
+        )
+    except (LoginFailed, MfaRequired) as e:
+        if not interactive:
+            raise
+        from . import _browser  # deferred: only the fallback needs it
+
+        print(f"Headless sign-in didn't finish ({e}); using the browser.", file=sys.stderr)
+        return _browser.browser_login(
+            authorize_url,
+            code_verifier=code_verifier,
+            token_url=token_url,
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            callback=callback,
+        )
+
+
+def _headless(
+    authorize_url,
+    username,
+    password,
+    totp_secret,
+    totp_code,
+    code_verifier,
+    token_url,
+    client_id,
+    redirect_uri,
+    callback,
+    ms_redirect,
+    cookies,
+    debug_dump,
+):
     q = _q(authorize_url)
     outer_state = q.get("state")
     xchg = {
