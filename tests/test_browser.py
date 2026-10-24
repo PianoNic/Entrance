@@ -166,3 +166,23 @@ def test_login_interactive_falls_back_to_browser(monkeypatch):
         entrance.login(_authorize(NATIVE))  # not interactive: the headless error surfaces
     with pytest.raises(ValueError):
         entrance.login(_authorize(NATIVE), interactive=True, ms_redirect=True)
+
+
+def test_login_interactive_always_skips_headless(monkeypatch):
+    # "always" = full manual browser sign-in, never attempt headless
+    monkeypatch.setattr(
+        _client, "_headless", lambda *a, **k: pytest.fail("headless must be skipped")
+    )
+    calls = {}
+    monkeypatch.setattr(
+        _browser, "browser_login", lambda url, **kw: calls.update(url=url) or {"code": "manual"}
+    )
+    res = entrance.login(_authorize(NATIVE), username="u", password="p", interactive="always")
+    assert res == {"code": "manual"} and calls["url"].startswith(AUTH)
+
+
+def test_login_interactive_without_credentials_goes_to_browser(monkeypatch, capsys):
+    # no username/password: the browser was the intended path, so no scary message
+    monkeypatch.setattr(_browser, "browser_login", lambda url, **kw: {"code": "b"})
+    assert entrance.login(_authorize(NATIVE), interactive=True) == {"code": "b"}
+    assert "didn't finish" not in capsys.readouterr().err

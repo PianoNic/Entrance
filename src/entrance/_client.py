@@ -225,14 +225,35 @@ def login(
     Tries the seeded cookies first (silent, no password); falls back to a
     username/password login.
 
-    `interactive=True` adds a last resort: if the headless login can't finish
-    (no credentials, push/number-matching MFA, an unhandled page), the sign-in
-    opens in the user's own browser instead - see `browser_login()`. The
-    browser's cookies are not captured, so that run returns no
+    `interactive` chooses a browser fallback (see `browser_login()`):
+      * `True` - try headless first; if it can't finish (no credentials,
+        push/number-matching MFA, an unhandled page) open the user's own browser.
+        With no username/password this goes straight to a full manual sign-in.
+      * `"always"` - skip headless entirely and open the browser for a full
+        manual sign-in (email, password, 2FA), even when credentials are given.
+    The browser's cookies are not captured, so an interactive run returns no
     `session_cookies` and writes no cookie file.
     """
     if interactive and ms_redirect:
-        raise ValueError("interactive=True can't be combined with ms_redirect=True")
+        raise ValueError("interactive can't be combined with ms_redirect=True")
+
+    def _browser_login():
+        from . import _browser  # deferred: only the browser path needs it
+
+        return _browser.browser_login(
+            authorize_url,
+            code_verifier=code_verifier,
+            token_url=token_url,
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            callback=callback,
+        )
+
+    # interactive="always": go straight to a full manual sign-in in the browser,
+    # skipping the headless attempt even when credentials are supplied.
+    if interactive == "always":
+        return _browser_login()
+
     try:
         return _headless(
             authorize_url,
@@ -252,17 +273,11 @@ def login(
     except (LoginFailed, MfaRequired) as e:
         if not interactive:
             raise
-        from . import _browser  # deferred: only the fallback needs it
-
-        print(f"Headless sign-in didn't finish ({e}); using the browser.", file=sys.stderr)
-        return _browser.browser_login(
-            authorize_url,
-            code_verifier=code_verifier,
-            token_url=token_url,
-            client_id=client_id,
-            redirect_uri=redirect_uri,
-            callback=callback,
-        )
+        # A real headless failure (e.g. push MFA) is worth a note; with no
+        # credentials the browser was the intended path, so stay quiet.
+        if username and password:
+            print(f"Headless sign-in didn't finish ({e}); opening the browser.", file=sys.stderr)
+        return _browser_login()
 
 
 def _headless(
