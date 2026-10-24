@@ -38,6 +38,7 @@ The trick that makes browserless login actually work against a modern Entra tena
 - 🌐 **Provider-agnostic** - give it any OAuth2 authorize URL federated to Entra
 - 🔐 **Headless MFA** - TOTP second factor solved automatically from your authenticator secret
 - 🙋 **Browser fallback** - `interactive=True` opens the real browser for what headless can't do (push / number-matching MFA, passkeys), and catches the code via a localhost server or copy-paste
+- 🔑 **Mint a TOTP device** - `new_totp()` generates a software token + `otpauth://` URI to enroll once, then log in headlessly forever after
 - 🍪 **Silent SSO** - persisted cookie jar means password-free reruns
 - 🎛️ **Three return modes** - the raw `code`, exchanged `access_token`, or just the Microsoft redirect
 - 📦 **Tiny** - one module, `curl_cffi` + `pyotp`
@@ -77,6 +78,26 @@ own authenticator:
 login(authorize_url, "you@school.ch", "...", totp_secret="JBSWY3DPEHPK3PXP")
 login(authorize_url, "you@school.ch", "...", totp_code="123456")  # used as-is
 ```
+
+**Mint a TOTP device.** `new_totp()` generates a software token (or wraps a
+secret you supply) and gives you the Base32 `secret` to feed back into
+`login(totp_secret=...)`, plus an `otpauth://` provisioning URI to enroll it:
+
+```python
+from entrance import new_totp
+
+dev = new_totp("you@school.ch")
+print(dev.secret)   # Base32 - store it, pass to login(totp_secret=...)
+print(dev.uri)      # otpauth://... - render as a QR, or paste the secret into the portal
+print(dev.now())    # the current 6-digit code
+```
+
+Generating and using the secret is local and offline. **Registering** it as a
+real second factor is an account-side step: Entra gates self-service
+auth-method management behind an approved portal app and a fresh interactive
+MFA, so enroll the `secret`/`uri` once at [Security info](https://aka.ms/mysecurityinfo)
+(*Add → Authenticator app → "I want to use a different authenticator app"*).
+After that, every `login()` is fully headless.
 
 **Exchange the code for tokens** - pass a `token_url` and it does the OAuth exchange for you:
 
