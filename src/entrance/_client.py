@@ -321,7 +321,11 @@ def _headless(
 
     # 2) full credential login
     if not (username and password):
-        raise LoginFailed("No valid session cookies and no username/password to log in with.")
+        raise LoginFailed(
+            "No saved session and nothing to sign in with. Pass username and password "
+            "(plus totp_secret/totp_code for MFA), reuse a saved cookie jar via cookies=, "
+            "or pass interactive=True to sign in in a browser."
+        )
     res = _drive(
         c,
         authorize_url,
