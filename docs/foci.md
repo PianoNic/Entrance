@@ -20,6 +20,25 @@ auth_api = broker("some-client", "api://resource/.default")             # a non-
 - `client_id=` chooses the sign-in client (OfficeHome by default); `interactive=True`
   and every other `login()` kwarg pass through.
 
+### Device code sign-in (no redirect, no paste)
+
+The nicest interactive flow for a CLI or a headless box: `device=True` (or
+`device_login()` directly) shows a short code and a URL - the user opens the URL,
+enters the code, and signs in on a normal Microsoft page (push / passkeys work).
+No redirect URI, no loopback server, no copy-pasting a callback URL.
+
+```python
+broker = foci_login(client_id="d3590ed6-52b3-4102-aeff-aad2292ab01c",
+                    device=True, open_browser=True)
+# -> prints "To sign in, open https://login.microsoft.com/device and enter CODE-XXXX"
+```
+
+The sign-in client must have the device flow enabled: Microsoft's **Office**
+client (`d3590ed6-...`) does and yields a FOCI family token; **OfficeHome** does
+not. `on_prompt(verification_uri=, user_code=, message=)` overrides how the code
+is shown (default: a stderr print). `DeviceCodeError` is raised if the user
+declines or the code expires.
+
 Reuse a saved token later, or bring your own, with `Broker` directly:
 
 ```python

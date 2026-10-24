@@ -169,18 +169,26 @@ def foci_login(
     frt_store=".ms_frt",
     probe_client=None,
     interactive=False,
+    device=False,
+    open_browser=False,
+    on_prompt=None,
     **login_kwargs,
 ):
     """Sign in against a pre-consented first-party client and return a `Broker`
     on its FOCI family refresh token - no app registration.
 
     If `frt_store` holds a live refresh token no sign-in happens at all;
-    otherwise `entrance.login` signs in (password + TOTP, or `interactive=True`
-    for a browser) and the new token is saved there (`frt_store=None` disables
-    persistence). `username`/`password` are optional once `cookies` holds a
-    live session. `probe_client` is the client id used to validate a stored
-    token (defaults to `client_id`). Extra kwargs pass through to
-    `entrance.login`.
+    otherwise the sign-in runs and the new token is saved there
+    (`frt_store=None` disables persistence). Pick how to sign in:
+      * default - headless `entrance.login` (password + TOTP, or seeded cookies).
+      * `interactive=True` / `"always"` - finish in a browser.
+      * `device=True` - the device code flow (show a short code, the user enters
+        it at a URL): no redirect, no loopback, no copy-paste. The sign-in
+        `client_id` must support it (Microsoft's Office client does; OfficeHome
+        does not). `open_browser=True` opens the code URL; `on_prompt` overrides
+        how the code is shown.
+    `probe_client` is the client id used to validate a stored token (defaults to
+    `client_id`). Extra kwargs pass through to `entrance.login`.
     """
     from ._client import login  # local import keeps the module graph acyclic
 
@@ -188,6 +196,18 @@ def foci_login(
         broker = _broker_from_store(frt_store, tenant, probe_client or client_id)
         if broker:
             return broker
+
+    if device:
+        from ._device import device_login
+
+        return device_login(
+            client_id,
+            tenant=tenant,
+            scope=scope,
+            frt_store=frt_store,
+            on_prompt=on_prompt,
+            open_browser=open_browser,
+        )
 
     verifier, challenge = _pkce()
     authorize_url = (

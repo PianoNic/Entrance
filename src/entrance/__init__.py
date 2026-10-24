@@ -10,6 +10,7 @@ from ._client import (
     login,
     parse_config,
 )
+from ._device import DeviceCodeError, device_login
 from ._enroll import EnrollmentError, enroll_totp
 from ._foci import (
     GRAPH_SCOPE,
@@ -34,6 +35,8 @@ __all__ = [
     "enroll_totp",
     "EnrollmentError",
     "foci_login",
+    "device_login",
+    "DeviceCodeError",
     "Broker",
     "TokenError",
     "read_secret",
