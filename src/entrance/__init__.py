@@ -11,6 +11,15 @@ from ._client import (
     parse_config,
 )
 from ._enroll import EnrollmentError, enroll_totp
+from ._foci import (
+    GRAPH_SCOPE,
+    OFFICEHOME,
+    Broker,
+    TokenError,
+    foci_login,
+    read_secret,
+    write_secret,
+)
 from ._totp import TotpDevice, new_totp, totp_now, totp_verify
 
 __all__ = [
@@ -24,6 +33,13 @@ __all__ = [
     "TotpDevice",
     "enroll_totp",
     "EnrollmentError",
+    "foci_login",
+    "Broker",
+    "TokenError",
+    "read_secret",
+    "write_secret",
+    "GRAPH_SCOPE",
+    "OFFICEHOME",
     "BROWSER_HEADERS",
     "MfaRequired",
     "LoginFailed",
