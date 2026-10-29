@@ -29,7 +29,8 @@ The whole thing is one small module and two dependencies.
 - 🚪 **No browser** - pure HTTP, drives `login.microsoftonline.com` directly
 - 🌐 **Provider-agnostic** - give it any OAuth2 authorize URL federated to Entra
 - 🔐 **Headless MFA** - TOTP second factor solved automatically from your authenticator secret
-- 🙋 **Browser fallback** - `interactive=True` opens the real browser for what headless can't do (push / number-matching MFA, passkeys), catching the code via a localhost server or copy-paste
+- 🔢 **Number-matching push** - `push_login()` drives an Authenticator push headlessly and streams out the two-digit number to tap, so your own UI can show "tap 42"
+- 🙋 **Browser fallback** - `interactive=True` opens the real browser for what headless can't do (passkeys, an unhandled challenge), catching the code via a localhost server or copy-paste
 - 🔑 **Mint & enroll TOTP** - `new_totp()` generates a software token, `enroll_totp()` registers a brand-new one on the account, so every later login is fully headless
 - 🔢 **Device code sign-in** - `device_login()` / `foci_login(device=True)`: show a short code, the user enters it at a URL - no redirect, no loopback, no copy-paste
 - 🧩 **FOCI broker** - `foci_login()` turns one sign-in into tokens for any pre-consented first-party client / scope, persisted for password-free reruns
@@ -63,6 +64,7 @@ print(res["callback_url"])   # the full callback URL - built, NOT sent
 ## Docs
 
 - [`login()`](docs/login.md) - MFA, token exchange, `ms_redirect`, cookies, return value, how it works
+- [Number-matching push](docs/push.md) - `push_login()`: capture the tap number server-side for your own UI
 - [Browser fallback](docs/browser.md) - `interactive=True` / `browser_login()` (loopback + paste)
 - [TOTP devices](docs/totp.md) - `new_totp()` and headless `enroll_totp()`
 - [FOCI broker](docs/foci.md) - `foci_login()` / `Broker` for Microsoft first-party clients

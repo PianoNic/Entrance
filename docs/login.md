@@ -27,9 +27,11 @@ login(authorize_url, "you@school.ch", "...", totp_secret="JBSWY3DPEHPK3PXP")
 login(authorize_url, "you@school.ch", "...", totp_code="123456")  # used as-is
 ```
 
-Only TOTP (authenticator-app) second factors can be satisfied headlessly. For
-push / number-matching / passkeys, use the [browser fallback](browser.md), or
-[mint and enroll a TOTP device](totp.md) once.
+TOTP (authenticator-app codes) are satisfied headlessly here. A **number-matching
+Authenticator push** is handled by [`push_login()`](push.md) (`login(push=True,
+on_push=...)`), which surfaces the two-digit number to tap. For passkeys or an
+unhandled challenge, use the [browser fallback](browser.md), or [mint and enroll
+a TOTP device](totp.md) once.
 
 ## Exchange the code for tokens
 
