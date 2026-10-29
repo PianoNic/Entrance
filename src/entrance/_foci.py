@@ -178,6 +178,7 @@ def foci_login(
     on_push=None,
     push_timeout=120,
     push_interval=3,
+    mfa=None,
     **login_kwargs,
 ):
     """Sign in against a pre-consented first-party client and return a `Broker`
@@ -199,6 +200,12 @@ def foci_login(
         bounds the wait, `push_interval` paces the poll. `entrance.push_login` is
         a thin wrapper over this. Raises `entrance.PushError` if the user rejects
         the prompt or does not respond in time.
+      * `mfa=<MfaPrompt>` - headless password sign-in with an **interactive**
+        second factor: only if Microsoft asks for MFA does the prompt choose
+        between push and an authenticator code (see `entrance.MfaPrompt`). Wrong
+        password, unsupported (federated/ADFS, no usable method) and blocked
+        (Conditional Access) raise distinct `LoginFailed` subclasses. `password`
+        may be an `entrance.Secret` so the caller holds no reference after use.
     `probe_client` is the client id used to validate a stored token (defaults to
     `client_id`). Extra kwargs pass through to `entrance.login`.
     """
@@ -252,6 +259,7 @@ def foci_login(
         on_push=on_push,
         push_timeout=push_timeout,
         push_interval=push_interval,
+        mfa=mfa,
         **login_kwargs,
     )
     if not res.get("code"):

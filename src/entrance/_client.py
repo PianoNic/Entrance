@@ -18,7 +18,8 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from curl_cffi import requests
 
-from ._push import PUSH_METHOD, _PushRequest, run_push_challenge
+from ._mfa import OTP, OTP_ATTEMPTS, PUSH, MfaCancelled, MfaSwitch, Secret, hook
+from ._push import PUSH_METHOD, PushError, _PushRequest, run_push_challenge
 
 IMPERSONATE = "chrome"
 # ponytail: ESTS serves a JS-only Chrome-SSO "pull" page (hpgid=6, no sFT) to
@@ -55,6 +56,81 @@ class LoginFailed(RuntimeError):
 
 class NeedsCredentials(RuntimeError):
     """Silent (cookie-jar) attempt didn't authenticate - fall back to password."""
+
+
+class InvalidCredentials(LoginFailed):
+    """Microsoft rejected the username or password (AADSTS50126 and friends)."""
+
+
+class Unsupported(LoginFailed):
+    """The account can't be signed in headlessly: federated to another IdP
+    (ADFS/Okta/...), an expired password, or a second factor Entrance can't
+    drive. Callers should fall back to a browser or device-code sign-in."""
+
+
+class FederatedAccount(Unsupported):
+    """The account's sign-in is federated to another identity provider.
+    `redirect_url` is where Microsoft would send the user (may be None)."""
+
+    def __init__(
+        self, message="Account is federated to another identity provider", redirect_url=None
+    ):
+        self.redirect_url = redirect_url
+        super().__init__(message)
+
+
+class UnsupportedMfa(Unsupported, MfaRequired):
+    """MFA is required but the account offers no method Entrance can drive (only
+    SMS/voice/FIDO/...) or isn't enrolled. `offered` lists Microsoft's method ids."""
+
+    def __init__(self, message, offered=()):
+        self.offered = sorted(m for m in offered if m)
+        super().__init__(message)
+
+
+class Blocked(LoginFailed):
+    """Microsoft refused the sign-in by policy: Conditional Access (AADSTS530xx),
+    a compliant/managed device requirement, a locked or disabled account.
+    `code` is the AADSTS number as a string."""
+
+    def __init__(self, message, code=None):
+        self.code = code
+        super().__init__(message)
+
+
+class OtpRejected(MfaRequired):
+    """Microsoft rejected every authenticator code that was tried (`attempts`)."""
+
+    def __init__(self, message, attempts=0):
+        self.attempts = attempts
+        super().__init__(message)
+
+
+_INVALID_CREDENTIAL_CODES = {"50126", "50034", "50056", "50064", "50144"}
+_BLOCKED_CODES = {
+    "50053", "50057", "50097", "50105", "50131", "50158", "53000", "53001", "53002",
+    "53003", "53004", "530003", "530032", "530034", "53010", "70044",
+}  # fmt: skip
+_UNSUPPORTED_CODES = {"50055", "50133", "50173", "81016", "50011"}
+
+
+def _aadsts(text):
+    m = re.search(r"AADSTS(\d+)", str(text or ""))
+    return m.group(1) if m else None
+
+
+def _raise_entra_error(code, text, prefix="Entra error"):
+    """Raise the most specific `LoginFailed` for a Microsoft error code/message.
+    Only Microsoft's own error text is used - never anything the caller sent."""
+    code = str(code or "") or _aadsts(text) or ""
+    text = str(text or "").strip()[:300]
+    if code in _INVALID_CREDENTIAL_CODES:
+        raise InvalidCredentials("Wrong username or password")
+    if code in _BLOCKED_CODES:
+        raise Blocked(f"Sign-in blocked by policy (AADSTS{code})", code=code)
+    if code in _UNSUPPORTED_CODES:
+        raise Unsupported(f"Sign-in not supported here (AADSTS{code})")
+    raise LoginFailed(f"{prefix} sErrorCode={code}: {text}" if code else f"{prefix}: {text}")
 
 
 # --- helpers ----------------------------------------------------------------
@@ -203,6 +279,7 @@ def login(
     on_push=None,
     push_timeout=120,
     push_interval=3,
+    mfa=None,
 ):
     """Drive `authorize_url` through Microsoft and return a dict.
 
@@ -235,6 +312,21 @@ def login(
     wait and `push_interval` paces the poll. Prefer `entrance.push_login()` /
     `foci_login(push=True)` for the full sign-in-to-`Broker` path.
 
+    `mfa=<MfaPrompt>` is the **interactive** second factor (see `entrance.MfaPrompt`):
+    only when Microsoft asks for MFA, `mfa.choose(methods)` picks `"push"` or
+    `"otp"` from what the account offers, `mfa.on_push(PushEvent)` streams the
+    number to tap, `mfa.otp(attempt)` supplies an authenticator code (up to 3
+    tries), and the user may switch method mid-way. It takes precedence over
+    `totp_secret`/`totp_code` and can't be combined with `push=True`. Failures
+    are distinct: `InvalidCredentials` (wrong password), `Unsupported` /
+    `FederatedAccount` / `UnsupportedMfa` (can't be driven headlessly), `Blocked`
+    (policy / Conditional Access), `PushError` (denied / timed out),
+    `OtpRejected`, `MfaCancelled`.
+
+    `password` may be an `entrance.Secret`: a one-shot holder whose value is
+    dropped the moment it is submitted to Microsoft. The password is never logged,
+    cached or included in an exception message or debug dump.
+
     client_id / redirect_uri / state default to the authorize URL's query.
     Tries the seeded cookies first (silent, no password); falls back to a
     username/password login.
@@ -252,9 +344,14 @@ def login(
         raise ValueError("interactive can't be combined with ms_redirect=True")
     if push and ms_redirect:
         raise ValueError("push can't be combined with ms_redirect=True")
+    if mfa is not None and (push or ms_redirect):
+        raise ValueError("mfa can't be combined with push=True or ms_redirect=True")
+    had_credentials = bool(username and password)
+    secret = password if isinstance(password, Secret) or password is None else Secret(password)
+    password = None  # from here on only the one-shot holder carries it
     push_req = (
         _PushRequest(on_event=on_push, timeout=push_timeout, interval=push_interval)
-        if push
+        if push or mfa is not None
         else None
     )
 
@@ -279,7 +376,7 @@ def login(
         return _headless(
             authorize_url,
             username,
-            password,
+            secret,
             totp_secret,
             totp_code,
             code_verifier,
@@ -291,13 +388,14 @@ def login(
             cookies,
             debug_dump,
             push_req,
+            mfa,
         )
     except (LoginFailed, MfaRequired) as e:
         if not interactive:
             raise
         # A real headless failure (e.g. push MFA) is worth a note; with no
         # credentials the browser was the intended path, so stay quiet.
-        if username and password:
+        if had_credentials:
             print(f"Headless sign-in didn't finish ({e}); opening the browser.", file=sys.stderr)
         return _browser_login()
 
@@ -317,6 +415,7 @@ def _headless(
     cookies,
     debug_dump,
     push_req=None,
+    mfa=None,
 ):
     q = _q(authorize_url)
     outer_state = q.get("state")
@@ -346,6 +445,7 @@ def _headless(
                 debug_dump,
                 ms_redirect,
                 push_req,
+                mfa,
             )
             return _finalize(c, res, cookies)
         except NeedsCredentials:
@@ -369,6 +469,7 @@ def _headless(
         debug_dump,
         ms_redirect,
         push_req,
+        mfa,
     )
     return _finalize(c, res, cookies)
 
@@ -384,6 +485,7 @@ def _drive(
     debug_dump,
     ms_redirect,
     push_req=None,
+    mfa=None,
 ):
     r = c.get(authorize_url, allow_redirects=False)
     return _walk(
@@ -397,10 +499,11 @@ def _drive(
         debug_dump,
         ms_redirect,
         push_req=push_req,
+        mfa=mfa,
     )
 
 
-def _submit_password(c, cfg, username, password):
+def _submit_password(c, cfg, username, secret):
     ft, ctx = cfg["sFT"], cfg["sCtx"]
     if cfg.get("urlGetCredentialType"):  # refresh flow token, detect federation
         gct = c.post(
@@ -415,27 +518,41 @@ def _submit_password(c, cfg, username, password):
                 "flowToken": ft,
             },
         ).json()
-        if (gct.get("Credentials") or {}).get("FederationRedirectUrl"):
-            raise LoginFailed(
-                "Account federated to another IdP: " + gct["Credentials"]["FederationRedirectUrl"]
-            )
+        fed = (gct.get("Credentials") or {}).get("FederationRedirectUrl")
+        if fed:
+            raise FederatedAccount("Account federated to another IdP: " + fed, redirect_url=fed)
+        if gct.get("IfExistsResult") == 1:  # no such account
+            raise InvalidCredentials("Wrong username or password")
         ft = gct.get("FlowToken") or ft
-    return c.post(
-        _abs(cfg["urlPost"]),
-        data={
-            "login": username,
-            "loginfmt": username,
-            "passwd": password,
-            "type": "11",
-            "LoginOptions": "3",
-            "ctx": ctx,
-            "flowToken": ft,
-            "canary": cfg.get("canary"),
-            "ps": "2",
-            "i19": "1000",
-        },
-        allow_redirects=False,
-    )
+    pw = secret.take() if isinstance(secret, Secret) else secret
+    if pw is None:
+        raise LoginFailed("The sign-in page repeated after the password was submitted.")
+    data = {
+        "login": username,
+        "loginfmt": username,
+        "passwd": pw,
+        "type": "11",
+        "LoginOptions": "3",
+        "ctx": ctx,
+        "flowToken": ft,
+        "canary": cfg.get("canary"),
+        "ps": "2",
+        "i19": "1000",
+    }
+    pw = None  # the form holds the only remaining reference
+    try:
+        return c.post(_abs(cfg["urlPost"]), data=data, allow_redirects=False)
+    finally:
+        data = None
+
+
+def _looks_federated(url):
+    """A redirect leaving Microsoft for an ADFS-style endpoint after the password."""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if host.endswith((".microsoftonline.com", ".live.com", ".microsoft.com")):
+        return False
+    return "/adfs/" in parts.path.lower() or host.startswith(("adfs.", "fs.", "sts."))
 
 
 def _mfa_headers(cfg):
@@ -474,7 +591,103 @@ def _mfa_process(c, cfg, chosen, ctx, ft, otp=None):
     return c.post(_abs(cfg["urlPost"]), data=data, allow_redirects=False)
 
 
-def _handle_mfa(c, cfg, otp_source, debug_dump, push_req=None):
+_OFFERED = {PUSH_METHOD: PUSH, "PhoneAppOTP": OTP}
+_METHOD_IDS = {v: k for k, v in _OFFERED.items()}
+
+
+def _offered_methods(cfg):
+    """The normalized methods ("push", "otp") the account offers, push first."""
+    ids = {p.get("authMethodId") for p in cfg.get("arrUserProofs") or []}
+    return [m for mid, m in _OFFERED.items() if mid in ids]
+
+
+def _otp_challenge(c, cfg, mfa, hdr):
+    """BeginAuth for PhoneAppOTP, then up to OTP_ATTEMPTS asks for a code. Returns
+    `(ctx, flow_token, code)` for the ProcessAuth POST."""
+    chosen = _METHOD_IDS[OTP]
+    begin_url, end_url = _abs(cfg["urlBeginAuth"]), _abs(cfg["urlEndAuth"])
+    ctx, ft = cfg["sCtx"], cfg["sFT"]
+    begin = c.post(
+        begin_url,
+        json={"AuthMethodId": chosen, "Method": "BeginAuth", "ctx": ctx, "flowToken": ft},
+        headers=hdr,
+    ).json()
+    if not begin.get("Success"):
+        raise MfaRequired(f"BeginAuth failed: {begin.get('Message') or begin}")
+    ctx, ft = begin.get("Ctx", ctx), begin.get("FlowToken", ft)
+    session_id = begin.get("SessionId")
+    cancelled = hook(mfa, "cancelled")
+    ask = hook(mfa, "otp")
+    for attempt in range(1, OTP_ATTEMPTS + 1):
+        if cancelled():
+            raise MfaCancelled("Sign-in cancelled")
+        code = str(ask(attempt)).strip()
+        end = c.post(
+            end_url,
+            json={
+                "AuthMethodId": chosen,
+                "Method": "EndAuth",
+                "ctx": ctx,
+                "flowToken": ft,
+                "SessionId": session_id,
+                "AdditionalAuthData": code,
+                "PollCount": 1,
+            },
+            headers=hdr,
+        ).json()
+        ctx, ft = end.get("Ctx", ctx), end.get("FlowToken", ft)
+        if end.get("Success") and end.get("ResultValue") in (None, "Success"):
+            return ctx, ft, code
+        code = None
+    raise OtpRejected(
+        f"Microsoft rejected the authenticator code {OTP_ATTEMPTS} times", attempts=OTP_ATTEMPTS
+    )
+
+
+def _handle_mfa_interactive(c, cfg, debug_dump, mfa, push_req):
+    """Ask `mfa` which offered method to use and drive it; loop back to `choose`
+    on a switch (or a denied/timed-out push / spent codes when `retry` allows)."""
+    offered = _offered_methods(cfg)
+    if not offered:
+        _mfa_dump(cfg, debug_dump)
+        ids = [p.get("authMethodId") for p in cfg.get("arrUserProofs") or []]
+        raise UnsupportedMfa(
+            f"No supported MFA method on this account; offered={ids}.", offered=ids
+        )
+    hdr = _mfa_headers(cfg)
+    choose, retry = hook(mfa, "choose"), hook(mfa, "retry")
+    req = _PushRequest(
+        on_event=hook(mfa, "on_push"),
+        timeout=push_req.timeout if push_req else 120,
+        interval=push_req.interval if push_req else 3,
+        should_switch=hook(mfa, "should_switch"),
+        cancelled=hook(mfa, "cancelled"),
+    )
+    while True:
+        if hook(mfa, "cancelled")():
+            raise MfaCancelled("Sign-in cancelled")
+        method = choose(list(offered))
+        if method not in offered:
+            raise UnsupportedMfa(f"Method {method!r} isn't offered; offered={offered}.")
+        try:
+            if method == PUSH:
+                ctx, ft = run_push_challenge(c, cfg, PUSH_METHOD, hdr, req)
+                return _mfa_process(c, cfg, PUSH_METHOD, ctx, ft)
+            ctx, ft, code = _otp_challenge(c, cfg, mfa, hdr)
+            try:
+                return _mfa_process(c, cfg, _METHOD_IDS[OTP], ctx, ft, otp=code)
+            finally:
+                code = None
+        except MfaSwitch:
+            continue
+        except (PushError, OtpRejected) as e:
+            if not retry(e):
+                raise
+
+
+def _handle_mfa(c, cfg, otp_source, debug_dump, push_req=None, mfa=None):
+    if mfa is not None:
+        return _handle_mfa_interactive(c, cfg, debug_dump, mfa, push_req)
     proofs = cfg.get("arrUserProofs") or []
     methods = {p.get("authMethodId") for p in proofs}
 
@@ -554,6 +767,7 @@ def _walk(
     injected=False,
     pw_done=False,
     push_req=None,
+    mfa=None,
 ):
     if hops > 20:
         raise LoginFailed("Too many hops without reaching the callback code.")
@@ -573,6 +787,7 @@ def _walk(
             injected=kw.get("injected", injected),
             pw_done=kw.get("pw_done", pw_done),
             push_req=push_req,
+            mfa=mfa,
         )
 
     # --- redirect hop ---
@@ -580,7 +795,8 @@ def _walk(
         loc = urljoin(r.url, r.headers["location"])
         q = _q(loc)
         if q.get("error"):
-            raise LoginFailed("OAuth error: " + q.get("error_description", q["error"]))
+            desc = q.get("error_description", q["error"])
+            _raise_entra_error(_aadsts(desc), desc, prefix="OAuth error")
         # ms_redirect: stop at the redirect leaving Microsoft back to the
         # provider, carrying the (inner) code - don't follow it.
         if (
@@ -597,6 +813,8 @@ def _walk(
             }
         if not ms_redirect and q.get("code") and q.get("state") == outer_state:
             return _finish(c, q["code"], q["state"], xchg, intercepted=loc)
+        if creds is not None and pw_done and _looks_federated(loc):
+            raise FederatedAccount(redirect_url=loc.split("?", 1)[0])
         # entering Entra's authorize endpoint: add login_hint; force fresh creds
         # only when we have a password (silent reuse must NOT send prompt=login)
         if (
@@ -623,18 +841,17 @@ def _walk(
             if creds is None:
                 raise NeedsCredentials()  # silent seed didn't authenticate
             if pw_done and err not in ("", "0", "16000"):
-                raise LoginFailed(
-                    f"Login rejected (sErrorCode={err}): "
-                    + str(
-                        cfg.get("strServiceExceptionMessage")
-                        or cfg.get("sErrTxt")
-                        or "wrong password?"
-                    )
+                _raise_entra_error(
+                    err,
+                    cfg.get("strServiceExceptionMessage")
+                    or cfg.get("sErrTxt")
+                    or "wrong password?",
+                    prefix="Login rejected",
                 )
             return rec(_submit_password(c, cfg, username, creds), pw_done=True)
 
         if cfg.get("urlBeginAuth") or err in _MFA_CODES:  # MFA challenge
-            return rec(_handle_mfa(c, cfg, otp_source, debug_dump, push_req))
+            return rec(_handle_mfa(c, cfg, otp_source, debug_dump, push_req, mfa))
 
         if url_post.rstrip("/").endswith("kmsi"):  # "Stay signed in?"
             return rec(
@@ -652,10 +869,7 @@ def _walk(
             )
 
         if err and err not in ("0", "16000"):
-            raise LoginFailed(
-                f"Entra error sErrorCode={err}: "
-                + str(cfg.get("strServiceExceptionMessage") or cfg.get("sErrTxt"))
-            )
+            _raise_entra_error(err, cfg.get("strServiceExceptionMessage") or cfg.get("sErrTxt"))
 
     # form_post bounce (a self-submitting <form> back to the provider)
     form = re.search(r'<form[^>]+action="([^"]+)"', r.text)
