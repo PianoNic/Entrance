@@ -174,6 +174,10 @@ def foci_login(
     device=False,
     open_browser=False,
     on_prompt=None,
+    push=False,
+    on_push=None,
+    push_timeout=120,
+    push_interval=3,
     **login_kwargs,
 ):
     """Sign in against a pre-consented first-party client and return a `Broker`
@@ -189,6 +193,12 @@ def foci_login(
         `client_id` must support it (Microsoft's Office client does; OfficeHome
         does not). `open_browser=True` opens the code URL; `on_prompt` overrides
         how the code is shown.
+      * `push=True` - headless password sign-in finished with a number-matching
+        Authenticator push: `on_push(PushEvent)` receives the two-digit number
+        to tap and the pending/approved/denied/timed-out progress. `push_timeout`
+        bounds the wait, `push_interval` paces the poll. `entrance.push_login` is
+        a thin wrapper over this. Raises `entrance.PushError` if the user rejects
+        the prompt or does not respond in time.
     `probe_client` is the client id used to validate a stored token (defaults to
     `client_id`). Extra kwargs pass through to `entrance.login`.
     """
@@ -238,6 +248,10 @@ def foci_login(
         redirect_uri=redirect_uri,
         cookies=cookies,
         interactive=interactive,
+        push=push,
+        on_push=on_push,
+        push_timeout=push_timeout,
+        push_interval=push_interval,
         **login_kwargs,
     )
     if not res.get("code"):

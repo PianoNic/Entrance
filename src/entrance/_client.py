@@ -18,6 +18,8 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from curl_cffi import requests
 
+from ._push import PUSH_METHOD, _PushRequest, run_push_challenge
+
 IMPERSONATE = "chrome"
 # ponytail: ESTS serves a JS-only Chrome-SSO "pull" page (hpgid=6, no sFT) to
 # *Google Chrome* (which supports the BSSO extension) but the plain credential
@@ -197,6 +199,10 @@ def login(
     cookies=".ms_session.json",
     debug_dump=None,
     interactive=False,
+    push=False,
+    on_push=None,
+    push_timeout=120,
+    push_interval=3,
 ):
     """Drive `authorize_url` through Microsoft and return a dict.
 
@@ -219,7 +225,15 @@ def login(
 
     MFA: pass `totp_secret` (Base32, a fresh code is generated per attempt) or
     `totp_code` (an already-valid 6-digit code, used as-is). Only TOTP /
-    authenticator-app second factors can be satisfied headlessly.
+    authenticator-app second factors can be satisfied this way.
+
+    `push=True` instead satisfies MFA with a **number-matching Authenticator
+    push**: Microsoft shows a two-digit number and the user taps it in the app.
+    `on_push(PushEvent)` receives the number (a `number_matching` event), then a
+    `pending` event per poll, then a terminal `approved`; a rejection or no
+    response raises `entrance.PushError`. `push_timeout` (seconds) bounds the
+    wait and `push_interval` paces the poll. Prefer `entrance.push_login()` /
+    `foci_login(push=True)` for the full sign-in-to-`Broker` path.
 
     client_id / redirect_uri / state default to the authorize URL's query.
     Tries the seeded cookies first (silent, no password); falls back to a
@@ -236,6 +250,13 @@ def login(
     """
     if interactive and ms_redirect:
         raise ValueError("interactive can't be combined with ms_redirect=True")
+    if push and ms_redirect:
+        raise ValueError("push can't be combined with ms_redirect=True")
+    push_req = (
+        _PushRequest(on_event=on_push, timeout=push_timeout, interval=push_interval)
+        if push
+        else None
+    )
 
     def _browser_login():
         from . import _browser  # deferred: only the browser path needs it
@@ -269,6 +290,7 @@ def login(
             ms_redirect,
             cookies,
             debug_dump,
+            push_req,
         )
     except (LoginFailed, MfaRequired) as e:
         if not interactive:
@@ -294,6 +316,7 @@ def _headless(
     ms_redirect,
     cookies,
     debug_dump,
+    push_req=None,
 ):
     q = _q(authorize_url)
     outer_state = q.get("state")
@@ -313,7 +336,16 @@ def _headless(
     if _seed_cookies(c, cookies):
         try:
             res = _drive(
-                c, authorize_url, outer_state, xchg, username, None, None, debug_dump, ms_redirect
+                c,
+                authorize_url,
+                outer_state,
+                xchg,
+                username,
+                None,
+                None,
+                debug_dump,
+                ms_redirect,
+                push_req,
             )
             return _finalize(c, res, cookies)
         except NeedsCredentials:
@@ -336,15 +368,36 @@ def _headless(
         otp_source,
         debug_dump,
         ms_redirect,
+        push_req,
     )
     return _finalize(c, res, cookies)
 
 
 def _drive(
-    c, authorize_url, outer_state, xchg, username, creds, otp_source, debug_dump, ms_redirect
+    c,
+    authorize_url,
+    outer_state,
+    xchg,
+    username,
+    creds,
+    otp_source,
+    debug_dump,
+    ms_redirect,
+    push_req=None,
 ):
     r = c.get(authorize_url, allow_redirects=False)
-    return _walk(c, r, outer_state, xchg, username, creds, otp_source, debug_dump, ms_redirect)
+    return _walk(
+        c,
+        r,
+        outer_state,
+        xchg,
+        username,
+        creds,
+        otp_source,
+        debug_dump,
+        ms_redirect,
+        push_req=push_req,
+    )
 
 
 def _submit_password(c, cfg, username, password):
@@ -385,31 +438,71 @@ def _submit_password(c, cfg, username, password):
     )
 
 
-def _handle_mfa(c, cfg, otp_source, debug_dump):
-    proofs = cfg.get("arrUserProofs") or []
-    methods = {p.get("authMethodId") for p in proofs}
-    chosen = next((m for m in _TOTP_METHODS if m in methods), None)
-    if not chosen:
-        if debug_dump:
-            # Owner-only (0600): the dump contains raw auth flow tokens (sFT, sCtx, canary).
-            fd = os.open(debug_dump, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(json.dumps(cfg, indent=2))
-        raise MfaRequired(
-            f"No TOTP method on this account; offered={methods}. "
-            "Enroll an authenticator app (PhoneAppOTP)."
-        )
-    if otp_source is None:
-        raise MfaRequired("MFA required but no TOTP secret/code was provided.")
-
-    begin_url, end_url = _abs(cfg["urlBeginAuth"]), _abs(cfg["urlEndAuth"])
-    process_url = _abs(cfg["urlPost"])
-    ctx, ft = cfg["sCtx"], cfg["sFT"]
+def _mfa_headers(cfg):
     hdr = {}
     if cfg.get("apiCanary"):
         hdr["canary"] = cfg["apiCanary"]
     if cfg.get("correlationId"):
         hdr["client-request-id"] = cfg["correlationId"]
+    return hdr
+
+
+def _mfa_dump(cfg, debug_dump):
+    if debug_dump:
+        # Owner-only (0600): the dump contains raw auth flow tokens (sFT, sCtx, canary).
+        fd = os.open(debug_dump, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(cfg, indent=2))
+
+
+def _mfa_process(c, cfg, chosen, ctx, ft, otp=None):
+    """The final ProcessAuth POST that turns an approved/verified second factor
+    back into the login redirect. `otp` is the TOTP code (omitted for push)."""
+    data = {
+        "type": "19",
+        "GeneralVerify": "false",
+        "request": ctx,
+        "ctx": ctx,
+        "flowToken": ft,
+        "canary": cfg.get("canary"),
+        "mfaAuthMethod": chosen,
+        "login": cfg.get("sPOST_Username") or "",
+        "rememberMFA": "false",
+    }
+    if otp is not None:
+        data["otc"] = otp
+    return c.post(_abs(cfg["urlPost"]), data=data, allow_redirects=False)
+
+
+def _handle_mfa(c, cfg, otp_source, debug_dump, push_req=None):
+    proofs = cfg.get("arrUserProofs") or []
+    methods = {p.get("authMethodId") for p in proofs}
+
+    # Number-matching Authenticator push: surface the tap number and poll.
+    if push_req is not None:
+        if PUSH_METHOD not in methods:
+            _mfa_dump(cfg, debug_dump)
+            raise MfaRequired(
+                f"No Authenticator push method on this account; offered={methods}. "
+                "Use totp_secret/totp_code, or enroll Authenticator push."
+            )
+        ctx, ft = run_push_challenge(c, cfg, PUSH_METHOD, _mfa_headers(cfg), push_req)
+        return _mfa_process(c, cfg, PUSH_METHOD, ctx, ft)
+
+    chosen = next((m for m in _TOTP_METHODS if m in methods), None)
+    if not chosen:
+        _mfa_dump(cfg, debug_dump)
+        raise MfaRequired(
+            f"No TOTP method on this account; offered={methods}. "
+            "Enroll an authenticator app (PhoneAppOTP), or pass push=True for "
+            "number-matching Authenticator push."
+        )
+    if otp_source is None:
+        raise MfaRequired("MFA required but no TOTP secret/code was provided.")
+
+    begin_url, end_url = _abs(cfg["urlBeginAuth"]), _abs(cfg["urlEndAuth"])
+    ctx, ft = cfg["sCtx"], cfg["sFT"]
+    hdr = _mfa_headers(cfg)
 
     begin = c.post(
         begin_url,
@@ -444,22 +537,7 @@ def _handle_mfa(c, cfg, otp_source, debug_dump):
         raise MfaRequired(f"EndAuth/OTP rejected: {end.get('ResultValue') or end}")
     ctx, ft = end.get("Ctx", ctx), end.get("FlowToken", ft)
 
-    return c.post(
-        process_url,
-        data={
-            "type": "19",
-            "GeneralVerify": "false",
-            "request": ctx,
-            "ctx": ctx,
-            "flowToken": ft,
-            "canary": cfg.get("canary"),
-            "mfaAuthMethod": chosen,
-            "otc": otp,
-            "login": cfg.get("sPOST_Username") or "",
-            "rememberMFA": "false",
-        },
-        allow_redirects=False,
-    )
+    return _mfa_process(c, cfg, chosen, ctx, ft, otp=otp)
 
 
 def _walk(
@@ -475,6 +553,7 @@ def _walk(
     hops=0,
     injected=False,
     pw_done=False,
+    push_req=None,
 ):
     if hops > 20:
         raise LoginFailed("Too many hops without reaching the callback code.")
@@ -493,6 +572,7 @@ def _walk(
             hops=hops + 1,
             injected=kw.get("injected", injected),
             pw_done=kw.get("pw_done", pw_done),
+            push_req=push_req,
         )
 
     # --- redirect hop ---
@@ -554,7 +634,7 @@ def _walk(
             return rec(_submit_password(c, cfg, username, creds), pw_done=True)
 
         if cfg.get("urlBeginAuth") or err in _MFA_CODES:  # MFA challenge
-            return rec(_handle_mfa(c, cfg, otp_source, debug_dump))
+            return rec(_handle_mfa(c, cfg, otp_source, debug_dump, push_req))
 
         if url_post.rstrip("/").endswith("kmsi"):  # "Stay signed in?"
             return rec(
