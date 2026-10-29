@@ -22,6 +22,8 @@ Public surface: `push_login()` (returns a `Broker`), the `PushEvent` emitted to
 import time
 from dataclasses import dataclass
 
+from ._mfa import MfaCancelled, MfaSwitch
+
 # Progress states carried by PushEvent.state.
 NUMBER_MATCHING = "number_matching"  # the number to tap is now known
 PENDING = "pending"  # waiting for the user to approve in the app
@@ -65,6 +67,8 @@ class _PushRequest:
     on_event: object = None  # callable(PushEvent) | None
     timeout: float = 120
     interval: float = 3
+    should_switch: object = None  # callable() -> bool | None: abandon the push
+    cancelled: object = None  # callable() -> bool | None: abort the sign-in
 
 
 def _emit(on_event, event):
@@ -123,6 +127,10 @@ def run_push_challenge(c, cfg, chosen, hdr, req):
     deadline = time.time() + timeout
     poll = 0
     while time.time() < deadline:
+        if req.cancelled is not None and req.cancelled():
+            raise MfaCancelled("Sign-in cancelled")
+        if req.should_switch is not None and req.should_switch():
+            raise MfaSwitch()
         poll += 1
         end = c.post(
             end_url,
@@ -166,6 +174,7 @@ def push_login(
     frt_store=None,
     timeout=120,
     interval=3,
+    mfa=None,
     **login_kwargs,
 ):
     """Sign in with Microsoft Authenticator number-matching push, return a `Broker`.
@@ -175,7 +184,8 @@ def push_login(
     to `on_event(PushEvent)` - a `number_matching` event carrying the two-digit
     number to tap, then `pending` per poll, then a terminal `approved` (after
     which this returns the `Broker`). On rejection or no response it raises
-    `PushError` (its `state` is `denied` or `timed_out`).
+    `PushError` (its `state` is `denied` or `timed_out`). With `mfa=<MfaPrompt>`
+    the prompt chooses push or an authenticator code instead (see `MfaPrompt`).
 
     `client_id` defaults to OfficeHome (a pre-consented FOCI client); `scope`
     defaults to Graph `.default` + `offline_access`. `cookies` / `frt_store`
@@ -187,6 +197,20 @@ def push_login(
     """
     from ._foci import _SCOPES, OFFICEHOME, foci_login
 
+    if mfa is not None:  # interactive: the prompt picks push or code itself
+        return foci_login(
+            username,
+            password,
+            client_id=client_id or OFFICEHOME,
+            tenant=tenant,
+            scope=scope or _SCOPES,
+            cookies=cookies,
+            frt_store=frt_store,
+            push_timeout=timeout,
+            push_interval=interval,
+            mfa=mfa,
+            **login_kwargs,
+        )
     return foci_login(
         username,
         password,
