@@ -21,6 +21,8 @@ from ._foci import (
     read_secret,
     write_secret,
 )
+from ._http import client as http_client
+from ._http import warm_up
 from ._totp import TotpDevice, new_totp, totp_now, totp_verify
 
 __all__ = [
@@ -38,6 +40,8 @@ __all__ = [
     "device_login",
     "DeviceCodeError",
     "Broker",
+    "http_client",
+    "warm_up",
     "TokenError",
     "read_secret",
     "write_secret",

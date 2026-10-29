@@ -10,13 +10,18 @@ supplies which client ids / scopes to broker.
 
 import base64
 import hashlib
-import json
+import logging
 import os
 import secrets
 import tempfile
 import time
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+
+import httpx
+
+from . import _http as http
+
+log = logging.getLogger("entrance.foci")
 
 _TOKEN = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
 _AUTHORIZE = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize"
@@ -42,20 +47,17 @@ class TokenError(RuntimeError):
 
 
 def _post_token(url, data):
-    req = Request(
-        url,
-        data=urlencode(data).encode(),
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-    )
+    t0 = time.perf_counter()
     try:
-        with urlopen(req, timeout=30) as r:  # noqa: S310 - fixed https host
-            return json.loads(r.read())
-    except Exception as e:  # noqa: BLE001 - surface the AADSTS error body
-        body = getattr(e, "read", lambda: b"")()
-        try:
-            return json.loads(body)
-        except ValueError:
-            raise RuntimeError(f"Token endpoint error: {e}") from None
+        r = http.client().post(url, data=data)
+    except httpx.HTTPError as e:
+        raise RuntimeError(f"Token endpoint error: {e}") from None
+    finally:
+        log.debug("token POST %s took %.0f ms", url, (time.perf_counter() - t0) * 1000)
+    try:
+        return r.json()  # success or an AADSTS error body
+    except ValueError:
+        raise RuntimeError(f"Token endpoint error: HTTP {r.status_code}") from None
 
 
 def read_secret(path):
