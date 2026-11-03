@@ -8,7 +8,7 @@
 </p>
 <p align="center">
   <a href="https://github.com/PianoNic/Entrance"><img src="https://badgetrack.pianonic.ch/badge?tag=entrance&label=visits&color=0078D4&style=flat" alt="visits"/></a>
-  <img src="https://img.shields.io/badge/python-3.10%2B-0078D4" alt="Python 3.10+"/>
+  <img src="https://img.shields.io/badge/python-3.11%2B-0078D4" alt="Python 3.11+"/>
   <img src="https://img.shields.io/badge/browser-not%20required-0078D4" alt="No browser"/>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0078D4" alt="MIT license"/></a>
 </p>
@@ -44,7 +44,7 @@ The whole thing is one small module and two dependencies.
 pip install ms-entrance        # or: uv add ms-entrance
 ```
 
-The import name is `entrance` (`from entrance import login`). Python 3.10+;
+The import name is `entrance` (`from entrance import login`). Python 3.11+;
 `curl_cffi` and `pyotp` are pulled in automatically.
 
 ## Quickstart
