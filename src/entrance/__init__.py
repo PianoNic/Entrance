@@ -27,8 +27,8 @@ from ._foci import (
     read_secret,
     write_secret,
 )
+from ._http import HTTPError, warm_up
 from ._http import client as http_client
-from ._http import warm_up
 from ._mfa import OTP, OTP_ATTEMPTS, PUSH, MfaCancelled, MfaPrompt, MfaSwitch, Secret
 from ._push import (
     APPROVED,
@@ -65,6 +65,7 @@ __all__ = [
     "DENIED",
     "TIMED_OUT",
     "Broker",
+    "HTTPError",
     "http_client",
     "warm_up",
     "TokenError",

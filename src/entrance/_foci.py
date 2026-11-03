@@ -17,8 +17,6 @@ import tempfile
 import time
 from urllib.parse import urlencode
 
-import httpx
-
 from . import _http as http
 
 log = logging.getLogger("entrance.foci")
@@ -50,7 +48,7 @@ def _post_token(url, data):
     t0 = time.perf_counter()
     try:
         r = http.client().post(url, data=data)
-    except httpx.HTTPError as e:
+    except http.HTTPError as e:
         raise RuntimeError(f"Token endpoint error: {e}") from None
     finally:
         log.debug("token POST %s took %.0f ms", url, (time.perf_counter() - t0) * 1000)
