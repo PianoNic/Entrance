@@ -51,7 +51,12 @@ class MfaRequired(RuntimeError):
 
 
 class LoginFailed(RuntimeError):
-    pass
+    """The sign-in failed. `code` is Microsoft's AADSTS number as a string when
+    Microsoft named one, else None."""
+
+    def __init__(self, message="", code=None):
+        self.code = code
+        super().__init__(message)
 
 
 class NeedsCredentials(RuntimeError):
@@ -59,13 +64,29 @@ class NeedsCredentials(RuntimeError):
 
 
 class InvalidCredentials(LoginFailed):
-    """Microsoft rejected the username or password (AADSTS50126 and friends)."""
+    """Microsoft rejected the username or password (AADSTS50126, 50064)."""
+
+
+class AccountNotFound(InvalidCredentials):
+    """No account with that username exists in the directory (AADSTS50034, or the
+    credential-type check answered that the account doesn't exist)."""
+
+
+class PasswordExpired(LoginFailed):
+    """The account's password has expired (AADSTS50055 for a cloud password,
+    50144 for an on-premises Active Directory one). The user has to change it
+    first, for example at office.com, then sign in again."""
+
+
+class NoPassword(LoginFailed):
+    """The account has no password in the directory (AADSTS50056), so it signs in
+    passwordless only. Use a browser or device-code sign-in."""
 
 
 class Unsupported(LoginFailed):
     """The account can't be signed in headlessly: federated to another IdP
-    (ADFS/Okta/...), an expired password, or a second factor Entrance can't
-    drive. Callers should fall back to a browser or device-code sign-in."""
+    (ADFS/Okta/...) or a second factor Entrance can't drive. Callers should
+    fall back to a browser or device-code sign-in."""
 
 
 class FederatedAccount(Unsupported):
@@ -83,9 +104,9 @@ class UnsupportedMfa(Unsupported, MfaRequired):
     """MFA is required but the account offers no method Entrance can drive (only
     SMS/voice/FIDO/...) or isn't enrolled. `offered` lists Microsoft's method ids."""
 
-    def __init__(self, message, offered=()):
+    def __init__(self, message, offered=(), code=None):
         self.offered = sorted(m for m in offered if m)
-        super().__init__(message)
+        super().__init__(message, code=code)
 
 
 class Blocked(LoginFailed):
@@ -94,8 +115,7 @@ class Blocked(LoginFailed):
     `code` is the AADSTS number as a string."""
 
     def __init__(self, message, code=None):
-        self.code = code
-        super().__init__(message)
+        super().__init__(message, code=code)
 
 
 class OtpRejected(MfaRequired):
@@ -106,12 +126,15 @@ class OtpRejected(MfaRequired):
         super().__init__(message)
 
 
-_INVALID_CREDENTIAL_CODES = {"50126", "50034", "50056", "50064", "50144"}
+_INVALID_CREDENTIAL_CODES = {"50126", "50064"}
+_ACCOUNT_NOT_FOUND_CODES = {"50034"}
+_PASSWORD_EXPIRED_CODES = {"50055", "50144"}
+_NO_PASSWORD_CODES = {"50056"}
 _BLOCKED_CODES = {
     "50053", "50057", "50097", "50105", "50131", "50158", "53000", "53001", "53002",
     "53003", "53004", "530003", "530032", "530034", "53010", "70044",
 }  # fmt: skip
-_UNSUPPORTED_CODES = {"50055", "50133", "50173", "81016", "50011"}
+_UNSUPPORTED_CODES = {"50133", "50173", "81016", "50011"}
 
 
 def _aadsts(text):
@@ -125,12 +148,20 @@ def _raise_entra_error(code, text, prefix="Entra error"):
     code = str(code or "") or _aadsts(text) or ""
     text = str(text or "").strip()[:300]
     if code in _INVALID_CREDENTIAL_CODES:
-        raise InvalidCredentials("Wrong username or password")
+        raise InvalidCredentials("Wrong username or password", code=code)
+    if code in _ACCOUNT_NOT_FOUND_CODES:
+        raise AccountNotFound("No account with that username", code=code)
+    if code in _PASSWORD_EXPIRED_CODES:
+        raise PasswordExpired(f"The password has expired (AADSTS{code})", code=code)
+    if code in _NO_PASSWORD_CODES:
+        raise NoPassword(f"The account has no password (AADSTS{code})", code=code)
     if code in _BLOCKED_CODES:
         raise Blocked(f"Sign-in blocked by policy (AADSTS{code})", code=code)
     if code in _UNSUPPORTED_CODES:
-        raise Unsupported(f"Sign-in not supported here (AADSTS{code})")
-    raise LoginFailed(f"{prefix} sErrorCode={code}: {text}" if code else f"{prefix}: {text}")
+        raise Unsupported(f"Sign-in not supported here (AADSTS{code})", code=code)
+    raise LoginFailed(
+        f"{prefix} sErrorCode={code}: {text}" if code else f"{prefix}: {text}", code=code or None
+    )
 
 
 # --- helpers ----------------------------------------------------------------
@@ -318,7 +349,9 @@ def login(
     number to tap, `mfa.otp(attempt)` supplies an authenticator code (up to 3
     tries), and the user may switch method mid-way. It takes precedence over
     `totp_secret`/`totp_code` and can't be combined with `push=True`. Failures
-    are distinct: `InvalidCredentials` (wrong password), `Unsupported` /
+    are distinct: `InvalidCredentials` (wrong password; `AccountNotFound` for an
+    unknown username), `PasswordExpired`, `NoPassword` (passwordless account),
+    `Unsupported` /
     `FederatedAccount` / `UnsupportedMfa` (can't be driven headlessly), `Blocked`
     (policy / Conditional Access), `PushError` (denied / timed out),
     `OtpRejected`, `MfaCancelled`.
@@ -522,7 +555,7 @@ def _submit_password(c, cfg, username, secret):
         if fed:
             raise FederatedAccount("Account federated to another IdP: " + fed, redirect_url=fed)
         if gct.get("IfExistsResult") == 1:  # no such account
-            raise InvalidCredentials("Wrong username or password")
+            raise AccountNotFound("No account with that username")
         ft = gct.get("FlowToken") or ft
     pw = secret.take() if isinstance(secret, Secret) else secret
     if pw is None:
