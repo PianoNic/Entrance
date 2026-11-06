@@ -39,6 +39,12 @@ not. `on_prompt(verification_uri=, user_code=, message=)` overrides how the code
 is shown (default: a stderr print). `DeviceCodeError` is raised if the user
 declines or the code expires.
 
+After a headless sign-in, `broker.session_cookies` holds the Microsoft sign-in
+session it ended with (a list of `{name, value, domain, path}`, as `login()`'s
+`session_cookies`), so another Microsoft-federated sign-in can reuse it. It is
+empty when no sign-in ran (a live stored token, the device code flow). Treat it
+as a credential.
+
 Reuse a saved token later, or bring your own, with `Broker` directly:
 
 ```python

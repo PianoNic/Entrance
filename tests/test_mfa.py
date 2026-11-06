@@ -161,6 +161,35 @@ OTP_BAD = {"Success": False, "ResultValue": "OathCodeIncorrect", "Ctx": "c1", "F
 BOTH = ("PhoneAppNotification", "PhoneAppOTP")
 
 
+def test_sign_in_hands_back_its_cookies_without_a_jar_file(monkeypatch):
+    from types import SimpleNamespace
+
+    session(monkeypatch)
+    jar = [
+        SimpleNamespace(
+            name="ESTSAUTH", value="fake-ests", domain=".login.microsoftonline.com", path="/"
+        )
+    ]
+    monkeypatch.setattr(FakeSession, "__init__", _with_jar(FakeSession.__init__, jar))
+    res = run(Prompt())
+    assert res["session_cookies"] == [
+        {
+            "name": "ESTSAUTH",
+            "value": "fake-ests",
+            "domain": ".login.microsoftonline.com",
+            "path": "/",
+        }
+    ]
+
+
+def _with_jar(init, jar):
+    def wrapped(self, *a, **k):
+        init(self, *a, **k)
+        self.cookies.jar = jar
+
+    return wrapped
+
+
 def test_no_mfa_completes_without_asking(monkeypatch):
     session(monkeypatch)
     p = Prompt()
