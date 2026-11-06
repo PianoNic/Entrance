@@ -161,6 +161,35 @@ OTP_BAD = {"Success": False, "ResultValue": "OathCodeIncorrect", "Ctx": "c1", "F
 BOTH = ("PhoneAppNotification", "PhoneAppOTP")
 
 
+def test_sign_in_hands_back_its_cookies_without_a_jar_file(monkeypatch):
+    from types import SimpleNamespace
+
+    session(monkeypatch)
+    jar = [
+        SimpleNamespace(
+            name="ESTSAUTH", value="fake-ests", domain=".login.microsoftonline.com", path="/"
+        )
+    ]
+    monkeypatch.setattr(FakeSession, "__init__", _with_jar(FakeSession.__init__, jar))
+    res = run(Prompt())
+    assert res["session_cookies"] == [
+        {
+            "name": "ESTSAUTH",
+            "value": "fake-ests",
+            "domain": ".login.microsoftonline.com",
+            "path": "/",
+        }
+    ]
+
+
+def _with_jar(init, jar):
+    def wrapped(self, *a, **k):
+        init(self, *a, **k)
+        self.cookies.jar = jar
+
+    return wrapped
+
+
 def test_no_mfa_completes_without_asking(monkeypatch):
     session(monkeypatch)
     p = Prompt()
@@ -261,14 +290,57 @@ def test_cancel_during_push(monkeypatch):
 
 def test_wrong_password(monkeypatch):
     session(monkeypatch, creds_page(sErrorCode="50126", strServiceExceptionMessage="bad"))
-    with pytest.raises(entrance.InvalidCredentials):
+    with pytest.raises(entrance.InvalidCredentials) as e:
         run(Prompt())
+    assert e.value.code == "50126"
+    assert not isinstance(e.value, entrance.AccountNotFound)
 
 
 def test_unknown_account_is_invalid_credentials(monkeypatch):
     session(monkeypatch, gct={"IfExistsResult": 1})
-    with pytest.raises(entrance.InvalidCredentials):
+    with pytest.raises(entrance.InvalidCredentials) as e:
         run(Prompt())
+    assert isinstance(e.value, entrance.AccountNotFound)
+    assert e.value.code is None
+
+
+@pytest.mark.parametrize(
+    "code, exc",
+    [
+        ("50126", entrance.InvalidCredentials),
+        ("50064", entrance.InvalidCredentials),
+        ("50034", entrance.AccountNotFound),
+        ("50055", entrance.PasswordExpired),
+        ("50144", entrance.PasswordExpired),
+        ("50056", entrance.NoPassword),
+        ("53003", entrance.Blocked),
+        ("50133", entrance.Unsupported),
+        ("99999", entrance.LoginFailed),
+    ],
+)
+def test_aadsts_code_after_password(monkeypatch, code, exc):
+    session(monkeypatch, creds_page(sErrorCode=code, strServiceExceptionMessage="nope"))
+    with pytest.raises(entrance.LoginFailed) as e:
+        run(Prompt())
+    assert type(e.value) is exc
+    assert e.value.code == code
+    assert PASSWORD not in str(e.value)
+
+
+@pytest.mark.parametrize("code", ["50055", "50144", "50056"])
+def test_expired_or_missing_password_is_not_invalid_credentials(monkeypatch, code):
+    session(monkeypatch, creds_page(sErrorCode=code, strServiceExceptionMessage="nope"))
+    with pytest.raises(entrance.LoginFailed) as e:
+        run(Prompt())
+    assert not isinstance(e.value, (entrance.InvalidCredentials, entrance.Unsupported))
+
+
+def test_password_expired_redirect(monkeypatch):
+    loc = "https://cb.example/cb?error=invalid_grant&error_description=AADSTS50144%3A+expired"
+    session(monkeypatch, redirect(loc))
+    with pytest.raises(entrance.PasswordExpired) as e:
+        run(Prompt())
+    assert e.value.code == "50144"
 
 
 def test_federated_account(monkeypatch):

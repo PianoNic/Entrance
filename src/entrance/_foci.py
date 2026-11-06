@@ -90,10 +90,16 @@ class Broker:
     `broker(client_id, scope)` for a non-Graph resource.
 
     With `store`, the refresh token is written back (atomically, 0600) every
-    time it rotates."""
+    time it rotates.
 
-    def __init__(self, refresh_token, tenant="common", store=None):
+    `session_cookies` is the Microsoft sign-in session the headless sign-in ended
+    with, as a list of `{name, value, domain, path}` dicts (empty when no sign-in
+    ran, e.g. a stored token or the device code flow). It is a credential: keep it
+    out of logs."""
+
+    def __init__(self, refresh_token, tenant="common", store=None, session_cookies=None):
         self._frt = refresh_token
+        self.session_cookies = list(session_cookies or [])
         self._url = _TOKEN.format(tenant=tenant)
         self._store = store
         self._cache = {}  # (client_id, scope) -> (access_token, expiry_epoch)
@@ -204,6 +210,8 @@ def foci_login(
         password, unsupported (federated/ADFS, no usable method) and blocked
         (Conditional Access) raise distinct `LoginFailed` subclasses. `password`
         may be an `entrance.Secret` so the caller holds no reference after use.
+    The returned broker's `session_cookies` holds the sign-in's cookies, so a
+    caller can reuse the Microsoft session elsewhere without a second sign-in.
     `probe_client` is the client id used to validate a stored token (defaults to
     `client_id`). Extra kwargs pass through to `entrance.login`.
     """
@@ -281,4 +289,4 @@ def foci_login(
         )
     if frt_store:
         write_secret(frt_store, frt)
-    return Broker(frt, tenant, store=frt_store)
+    return Broker(frt, tenant, store=frt_store, session_cookies=res.get("session_cookies"))

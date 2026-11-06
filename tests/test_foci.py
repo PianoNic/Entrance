@@ -107,3 +107,29 @@ def test_foci_login_raises_without_code(monkeypatch, tmp_path):
     monkeypatch.setattr(client, "login", lambda *a, **k: {"session_cookies": []})
     with pytest.raises(entrance.TokenError, match="no_code|No authorization code"):
         entrance.foci_login("you@x.ch", "pw", frt_store=None, cookies=None)
+
+
+def test_foci_login_hands_back_the_sign_in_cookies(monkeypatch):
+    jar = [
+        {
+            "name": "ESTSAUTH",
+            "value": "fake-ests",
+            "domain": ".login.microsoftonline.com",
+            "path": "/",
+        }
+    ]
+    import entrance._client as client
+
+    monkeypatch.setattr(client, "login", lambda *a, **k: {"code": "CODE", "session_cookies": jar})
+    monkeypatch.setattr(_foci, "_post_token", lambda url, data: {"refresh_token": "FRT"})
+    broker = entrance.foci_login("you@x.ch", "pw", frt_store=None, cookies=None)
+    assert broker.session_cookies == jar
+    assert broker.session_cookies is not jar  # a copy, not the sign-in's own list
+
+
+def test_broker_without_a_sign_in_has_no_cookies(monkeypatch, tmp_path):
+    assert entrance.Broker("frt").session_cookies == []
+    store = tmp_path / "frt"
+    store.write_text("saved")
+    monkeypatch.setattr(_foci, "_post_token", lambda url, data: {"access_token": "at"})
+    assert entrance.foci_login(frt_store=str(store)).session_cookies == []

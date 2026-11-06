@@ -44,15 +44,19 @@ a default) or pass any object with the methods you need. `push_timeout` and
 
 ## Exceptions
 
-All sign-in failures other than push/cancel derive from `entrance.LoginFailed`.
+All sign-in failures other than push/cancel derive from `entrance.LoginFailed`. Each
+carries `.code`, the AADSTS number as a string when Microsoft named one (else `None`).
 
 | Exception | Meaning |
 |---|---|
-| `InvalidCredentials` | wrong password or unknown account (AADSTS50126, 50034, 50056, 50064) |
+| `InvalidCredentials` | wrong username or password (AADSTS50126, 50064) |
+| `AccountNotFound` | no such account (AADSTS50034, or `GetCredentialType` says it doesn't exist); also an `InvalidCredentials` |
+| `PasswordExpired` | the password has expired (AADSTS50055 cloud, 50144 on-premises AD); change it, then sign in again |
+| `NoPassword` | the account has no password, passwordless only (AADSTS50056) |
 | `Unsupported` | cannot be driven headlessly; base of the next two |
 | `FederatedAccount` | federated to another IdP (ADFS, Okta ...); `.redirect_url` |
 | `UnsupportedMfa` | MFA required but no push/code method (also an `MfaRequired`); `.offered` |
-| `Blocked` | refused by policy: Conditional Access (AADSTS53000-53004, 530003 ...), locked or disabled account; `.code` |
+| `Blocked` | refused by policy: Conditional Access (AADSTS53000-53004, 530003 ...), locked or disabled account |
 | `PushError` | push denied or timed out; `.state` is `denied` / `timed_out` |
 | `OtpRejected` | three codes rejected (also an `MfaRequired`); `.attempts` |
 | `MfaCancelled` | the caller cancelled |

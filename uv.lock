@@ -272,7 +272,7 @@ wheels = [
 
 [[package]]
 name = "ms-entrance"
-version = "1.7.0"
+version = "2.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "curl-cffi" },
